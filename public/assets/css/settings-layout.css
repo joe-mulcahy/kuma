@@ -125,3 +125,73 @@
         padding: 16px;
     }
 }
+
+/* Updates tab — release notes must follow theme tokens (no hardcoded white/#333). */
+.settings-update-notes-panel {
+    margin-top: 24px;
+    padding: 20px;
+    background: var(--settings-surface-soft, var(--surface-raised, #f9f9f9));
+    border-radius: 8px;
+    border-left: 4px solid var(--color-bark, #f57c00);
+    color: var(--settings-text, var(--text-primary, #333));
+}
+
+.settings-update-notes-panel__title {
+    margin: 0 0 16px 0;
+    color: var(--settings-accent-strong, var(--color-forest, #3d5a26));
+    font-size: 18px;
+}
+
+.settings-update-notes {
+    background: var(--settings-surface, var(--surface, #fff));
+    color: var(--settings-text, var(--text-primary, #333));
+    padding: 16px;
+    border-radius: 6px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.settings-update-notes h3,
+.settings-update-notes h4 {
+    margin: 16px 0 8px 0;
+    color: var(--settings-accent-strong, var(--color-forest, #3d5a26));
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.settings-update-notes h3 {
+    margin: 20px 0 12px 0;
+    font-size: 18px;
+}
+
+.settings-update-notes ul {
+    margin: 8px 0 16px 20px;
+    padding: 0;
+}
+
+.settings-update-notes li {
+    margin: 4px 0;
+    color: inherit;
+}
+
+.settings-update-notes-panel__reqs {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--settings-border, var(--border-color, #ddd));
+}
+
+.settings-update-notes-panel__reqs h4 {
+    margin: 0 0 8px 0;
+    color: var(--settings-muted, var(--text-muted, #666));
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.settings-update-notes-panel__reqs ul {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--settings-muted, var(--text-muted, #666));
+    font-size: 13px;
+}

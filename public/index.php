@@ -40,6 +40,11 @@ $auth = new Auth($db);
 // Require authentication
 $auth->requireAuth();
 
+\SimpleKuma\Update\TreePermissionNormalizer::ensureLiveInstallNormalized(
+    dirname(__DIR__),
+    $db
+);
+
 // Admin UI must not be indexed or associated with public Safe Browsing crawls
 header('X-Robots-Tag: noindex, nofollow', true);
 
@@ -155,6 +160,7 @@ $allowedPages = [
     'networks',
     'visitors',
     'conversions',
+    'email-optins',
     'click-lookup',
     'short-links',
     'postback-urls',
@@ -182,6 +188,7 @@ $pagePermissions = [
     'networks' => Permission::PERM_NETWORK_VIEW,
     'visitors' => Permission::PERM_VISITOR_LOG_VIEW,
     'conversions' => Permission::PERM_VISITOR_LOG_VIEW,
+    'email-optins' => Permission::PERM_VISITOR_LOG_VIEW,
     'click-lookup' => Permission::PERM_CAMPAIGN_VIEW, // Same as campaigns
     'short-links' => Permission::PERM_CAMPAIGN_VIEW, // Same as campaigns
     'postback-urls' => Permission::PERM_POSTBACK_VIEW,
@@ -240,6 +247,7 @@ $pageTitles = [
     'networks' => 'Networks',
     'visitors' => 'Visitor Log',
     'conversions' => 'Conversion Log',
+    'email-optins' => 'Email Opt-ins',
     'click-lookup' => 'Click Lookup',
     'short-links' => 'Short Links',
     'postback-urls' => 'Postback URLs',

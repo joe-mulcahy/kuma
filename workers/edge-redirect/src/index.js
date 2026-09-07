@@ -404,11 +404,14 @@ function normalizeTime(t) {
 
 function captureCost(campaign, params) {
   const ts = campaign.traffic_source || {};
-  const costKey = ts.cost_param_key || 'cost';
+  const rawKey = ts.cost_param_key != null ? String(ts.cost_param_key).trim() : '';
+  const costKey = rawKey || 'cost';
   if (params[costKey] !== undefined && params[costKey] !== '' && !isNaN(Number(params[costKey]))) {
     return Number(params[costKey]);
   }
-  if (params.cost !== undefined && params.cost !== '' && !isNaN(Number(params.cost))) {
+  // When a non-cost key is configured (TrafficStars price, Adsterra cpc), do not
+  // fall back to params.cost — that field is often CPM / bid, not CPC.
+  if (costKey === 'cost' && params.cost !== undefined && params.cost !== '' && !isNaN(Number(params.cost))) {
     return Number(params.cost);
   }
   if (campaign.default_cpc != null && !isNaN(Number(campaign.default_cpc))) {

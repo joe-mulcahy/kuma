@@ -252,12 +252,25 @@ final class AddStatsExclusionFlag
         return null;
     }
 
-    private static function rebuildTokenSummaryDate(
+    /**
+     * DELETE+rebuild clicks_stats_by_token_daily for one UTC summary_date from raw clicks.
+     * Skips the DELETE when clicks + clicks_archive are empty for that date so purged
+     * history in the token table is left intact.
+     */
+    public static function rebuildTokenSummaryDate(
         mysqli $db,
         string $summaryDate,
         bool $hasArchive
     ): ?string {
         if (!self::tableExists($db, 'clicks_stats_by_token_daily')) {
+            return null;
+        }
+
+        $rawCount = self::rawClickCountForSummaryDate($db, $summaryDate, $hasArchive);
+        if ($rawCount === null) {
+            return "Could not count raw clicks for token rebuild {$summaryDate}: {$db->error}";
+        }
+        if ($rawCount === 0) {
             return null;
         }
 
@@ -394,6 +407,39 @@ final class AddStatsExclusionFlag
         return $db->query($alter)
             ? null
             : "Could not create {$table}.{$index}: {$db->error}";
+    }
+
+    /**
+     * @return int|null Click count for the UTC day, or null on query failure
+     */
+    private static function rawClickCountForSummaryDate(
+        mysqli $db,
+        string $summaryDate,
+        bool $hasArchive
+    ): ?int {
+        $total = 0;
+        $tables = $hasArchive ? ['clicks', 'clicks_archive'] : ['clicks'];
+        foreach ($tables as $table) {
+            if (!self::tableExists($db, $table)) {
+                continue;
+            }
+            $stmt = $db->prepare(
+                "SELECT COUNT(*) FROM `{$table}` WHERE ts >= ? AND ts < DATE_ADD(?, INTERVAL 1 DAY)"
+            );
+            if ($stmt === false) {
+                return null;
+            }
+            $stmt->bind_param('ss', $summaryDate, $summaryDate);
+            if (!$stmt->execute()) {
+                $stmt->close();
+                return null;
+            }
+            $row = $stmt->get_result()->fetch_row();
+            $stmt->close();
+            $total += (int)($row[0] ?? 0);
+        }
+
+        return $total;
     }
 
     private static function tableExists(mysqli $db, string $table): bool

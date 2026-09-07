@@ -1091,23 +1091,16 @@ $db->close();
                         const tsTokens = JSON.parse(selectedOption.dataset.tokens);
                         if (Array.isArray(tsTokens) && tsTokens.length > 0) {
                             hasTrafficSourceTokens = true;
-                            const trafficSourceName = selectedOption.dataset.tsName || 'Unknown';
-                            // Sanitize traffic source name for use in token (remove spaces, special chars)
-                            const tsNameSanitized = trafficSourceName.replace(/[^a-zA-Z0-9]/g, '');
-                            
                             tsTokens.forEach((token, index) => {
                                 const tokenNum = index + 1;
                                 const paramName = token.parameter || `token${tokenNum}`;
-                                
-                                // Use unique format: {ts:TrafficSourceName:parameter}
-                                // This ensures 100% uniqueness across all traffic sources
-                                const tokenKey = `{ts:${tsNameSanitized}:${paramName}}`;
-                                const displayText = token.name 
-                                    ? `${token.name} (${paramName})` 
-                                    : `${paramName}`;
-                                const tooltipText = token.placeholder 
-                                    ? `${token.name || 'Token'} - Parameter: ${paramName}, Placeholder: ${token.placeholder}` 
-                                    : `${token.name || 'Token'} - Parameter: ${paramName}`;
+                                const tokenKey = `{ts_token${tokenNum}}`;
+                                const displayText = token.name
+                                    ? `${token.name} (ts_token${tokenNum})`
+                                    : tokenKey;
+                                const tooltipText = token.placeholder
+                                    ? `${token.name || 'Token'} — ${paramName}=${token.placeholder}. Inserts ${tokenKey}`
+                                    : `${token.name || 'Token'} — parameter ${paramName}. Inserts ${tokenKey}`;
                                 
                                 const button = createTokenButton(tokenKey, displayText, tooltipText, 'traffic-source');
                                 trafficSourceTokensContainer.appendChild(button);

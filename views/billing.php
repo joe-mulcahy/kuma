@@ -2,6 +2,7 @@
 // Billing Reports Page
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../src/Utils/Formatter.php';
+use SimpleKuma\Stats\CampaignStatsExpressions;
 use SimpleKuma\Utils\Formatter;
 
 // Mobile detection function
@@ -427,17 +428,18 @@ foreach ($tsData as $ts) {
         if (!empty($campaignIds)) {
             // Query stats exactly like campaigns overview does
             $idsPlaceholder = implode(',', array_fill(0, count($campaignIds), '?'));
+            $convJoin = CampaignStatsExpressions::conversionsCountJoinAllEvents();
             $statsQuery = $db->prepare("
                 SELECT 
                     cl.campaign_id,
                     COUNT(DISTINCT cl.id) as views,
                     COUNT(DISTINCT CASE WHEN cl.lp_click = 1 THEN cl.id END) as lp_clicks,
-                    COUNT(DISTINCT conv.id) as conversions,
+                    COALESCE(SUM(conv.conversion_count), 0) as conversions,
                     COALESCE(SUM(cl.cost), 0) as manual_cost,
-                    COALESCE(SUM(COALESCE(conv.payout, conv.value)), 0) as revenue
+                    COALESCE(SUM(conv.revenue_sum), 0) as revenue
                 FROM clicks cl
                 INNER JOIN campaigns cp ON cl.campaign_id = cp.id
-                LEFT JOIN conversions conv ON cl.click_id = conv.click_id
+                {$convJoin}
                 WHERE cl.campaign_id IN ($idsPlaceholder)
                     AND cl.traffic_source_id = ?
                     AND cl.ts >= ? AND cl.ts <= ?
@@ -518,19 +520,20 @@ foreach ($tsData as $ts) {
         continue;
     } else {
         // Fallback: Use campaign's traffic_source_id
+        $convJoin = CampaignStatsExpressions::conversionsCountJoinAllEvents();
         $campQuery = $db->prepare("
             SELECT 
                 cp.id,
                 cp.name,
                     COUNT(DISTINCT cl.id) as views,
                     COUNT(DISTINCT CASE WHEN cl.lp_click = 1 THEN cl.id END) as lp_clicks,
-                    COUNT(DISTINCT conv.id) as conversions,
+                    COALESCE(SUM(conv.conversion_count), 0) as conversions,
                 COALESCE(SUM(cl.cost), 0) as manual_cost,
-                    COALESCE(SUM(COALESCE(conv.payout, conv.value)), 0) as revenue
+                    COALESCE(SUM(conv.revenue_sum), 0) as revenue
             FROM campaigns cp
             LEFT JOIN clicks cl ON cp.id = cl.campaign_id 
                     AND cl.ts >= ? AND cl.ts <= ?
-            LEFT JOIN conversions conv ON cl.click_id = conv.click_id
+            {$convJoin}
             WHERE cp.traffic_source_id = ?
             GROUP BY cp.id, cp.name
             ORDER BY cp.name

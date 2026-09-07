@@ -3654,7 +3654,7 @@ $settingsTabs = array_values(array_filter(
                                 <select id="campaign_selector_for_tokens" 
                                         onchange="updateCustomTokenLabels()"
                                         style="width: 100%; padding: 6px; border: 1px solid #66bb6a; border-radius: 3px; font-size: 12px;">
-                                    <option value="">-- None selected (show generic token1-token20) --</option>
+                                    <option value="">-- None selected (generic {tokenN} and {ts_tokenN}) --</option>
                                     <?php
                                     foreach ($allCampaignsForTokens as $camp): 
                                         // custom_tokens_json is already decoded by Campaign::getAll()
@@ -3674,7 +3674,7 @@ $settingsTabs = array_values(array_filter(
                                     ?>
                                 </select>
                                 <div class="token-selector-hint">
-                                    Select a campaign to see campaign and traffic source custom tokens (token1-token20) with their labels.
+                                    Select a campaign to label tokens. Campaign custom tokens are {token1}–{token20}. Traffic source tokens (zone, subid, etc.) are {ts_token1}–{ts_token20}.
                                 </div>
                             </div>
                             
@@ -3863,7 +3863,7 @@ $settingsTabs = array_values(array_filter(
                                     $availableTokens = $tokenReplacer->getAvailableTokens();
                                 } catch (Exception $e) {
                                     error_log('Error loading TokenReplacer: ' . $e->getMessage());
-                                    $availableTokens = ['Built-in Tokens' => [], 'Custom Tokens' => []];
+                                    $availableTokens = ['Built-in Tokens' => [], 'Custom Tokens' => [], 'Traffic Source Tokens' => []];
                                 }
                                 ?>
                                 
@@ -3890,7 +3890,7 @@ $settingsTabs = array_values(array_filter(
                                 <!-- Custom Tokens (will be updated by JavaScript) -->
                                 <div id="custom_tokens_display" style="margin-bottom: 0;">
                                     <div id="custom_tokens_header" style="margin-bottom: 6px;">
-                                        <strong class="token-heading--custom">Custom Tokens:</strong>
+                                        <strong class="token-heading--custom">Campaign custom tokens ({token1}–{token20}):</strong>
                                     </div>
                                     <!-- Campaign Custom Tokens -->
                                     <div id="campaign_tokens_section" style="margin-bottom: 8px; display: none;">
@@ -3899,19 +3899,35 @@ $settingsTabs = array_values(array_filter(
                                     </div>
                                     <!-- Traffic Source Custom Tokens -->
                                     <div id="traffic_source_tokens_section" style="margin-bottom: 8px; display: none;">
-                                        <strong class="token-heading--traffic-source">Traffic Source Tokens:</strong>
+                                        <strong class="token-heading--traffic-source">Traffic Source Tokens ({ts_tokenN}):</strong>
                                         <div id="traffic_source_tokens_buttons" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;"></div>
                                     </div>
                                     <!-- Generic fallback -->
-                                    <div id="custom_tokens_buttons" style="display: flex; flex-wrap: wrap; gap: 6px;">
-                                        <!-- Generic tokens (default) -->
+                                    <div id="custom_tokens_buttons" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;">
                                         <?php
                                         $customTokensDefault = $availableTokens['Custom Tokens'] ?? [];
-                                        foreach ($customTokensDefault as $token => $description): 
+                                        foreach ($customTokensDefault as $token => $description):
                                         ?>
-                                            <button type="button" 
+                                            <button type="button"
                                                     onclick="insertTokenAtCursor('<?= htmlspecialchars($token) ?>')"
                                                     class="custom-token-btn token-btn--builtin"
+                                                    data-token="<?= htmlspecialchars($token) ?>"
+                                                    title="<?= htmlspecialchars($description) ?>">
+                                                <?= htmlspecialchars($token) ?>
+                                            </button>
+                                        <?php endforeach; ?>
+                                    </div>
+                                    <div id="generic_ts_tokens_header" style="margin-bottom: 6px;">
+                                        <strong class="token-heading--traffic-source">Traffic source tokens ({ts_token1}–{ts_token20}):</strong>
+                                    </div>
+                                    <div id="generic_ts_tokens_buttons" style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                        <?php
+                                        $tsTokensDefault = $availableTokens['Traffic Source Tokens'] ?? [];
+                                        foreach ($tsTokensDefault as $token => $description):
+                                        ?>
+                                            <button type="button"
+                                                    onclick="insertTokenAtCursor('<?= htmlspecialchars($token) ?>')"
+                                                    class="custom-token-btn token-btn--traffic-source"
                                                     data-token="<?= htmlspecialchars($token) ?>"
                                                     title="<?= htmlspecialchars($description) ?>">
                                                 <?= htmlspecialchars($token) ?>
@@ -3964,6 +3980,9 @@ $settingsTabs = array_values(array_filter(
                         const campaignTokensContainer = document.getElementById('campaign_tokens_buttons');
                         const trafficSourceTokensContainer = document.getElementById('traffic_source_tokens_buttons');
                         const genericTokensContainer = document.getElementById('custom_tokens_buttons');
+                        const genericTsHeader = document.getElementById('generic_ts_tokens_header');
+                        const genericTsButtons = document.getElementById('generic_ts_tokens_buttons');
+                        const customTokensHeader = document.getElementById('custom_tokens_header');
                         
                         const campaignSection = document.getElementById('campaign_tokens_section');
                         const trafficSourceSection = document.getElementById('traffic_source_tokens_section');
@@ -3972,6 +3991,9 @@ $settingsTabs = array_values(array_filter(
                         campaignSection.style.display = 'none';
                         trafficSourceSection.style.display = 'none';
                         genericTokensContainer.style.display = 'flex';
+                        if (genericTsHeader) genericTsHeader.style.display = 'block';
+                        if (genericTsButtons) genericTsButtons.style.display = 'flex';
+                        if (customTokensHeader) customTokensHeader.style.display = 'block';
                         
                         if (!selectedOption || !selectedOption.value) {
                             // Reset to generic tokens
@@ -4014,23 +4036,16 @@ $settingsTabs = array_values(array_filter(
                                 const tsTokens = trafficSourceTokens[trafficSourceId];
                                 if (Array.isArray(tsTokens) && tsTokens.length > 0) {
                                     hasTrafficSourceTokens = true;
-                                    // Get traffic source name for unique token format
-                                    const trafficSourceName = trafficSourceNames[trafficSourceId] || 'Unknown';
-                                    const tsNameSanitized = trafficSourceName.replace(/[^a-zA-Z0-9]/g, '');
-                                    
                                     tsTokens.forEach((token, index) => {
                                         const tokenNum = index + 1;
                                         const paramName = token.parameter || `token${tokenNum}`;
-                                        
-                                        // Use unique format: {ts:TrafficSourceName:parameter}
-                                        // This ensures 100% uniqueness across all traffic sources
-                                        const tokenKey = `{ts:${tsNameSanitized}:${paramName}}`;
-                                        const displayText = token.name 
-                                            ? `${token.name} (${paramName})` 
-                                            : `${paramName}`;
-                                        const tooltipText = token.placeholder 
-                                            ? `${token.name || 'Token'} - Parameter: ${paramName}, Placeholder: ${token.placeholder}` 
-                                            : `${token.name || 'Token'} - Parameter: ${paramName}`;
+                                        const tokenKey = `{ts_token${tokenNum}}`;
+                                        const displayText = token.name
+                                            ? `${token.name} (ts_token${tokenNum})`
+                                            : tokenKey;
+                                        const tooltipText = token.placeholder
+                                            ? `${token.name || 'Token'} — ${paramName}=${token.placeholder}. Inserts ${tokenKey}`
+                                            : `${token.name || 'Token'} — parameter ${paramName}. Inserts ${tokenKey}`;
                                         
                                         const button = createTokenButton(tokenKey, displayText, tooltipText, 'traffic-source');
                                         trafficSourceTokensContainer.appendChild(button);
@@ -4044,6 +4059,9 @@ $settingsTabs = array_values(array_filter(
                         // Show/hide sections and generic tokens
                         if (hasCampaignTokens || hasTrafficSourceTokens) {
                             genericTokensContainer.style.display = 'none';
+                            if (genericTsHeader) genericTsHeader.style.display = 'none';
+                            if (genericTsButtons) genericTsButtons.style.display = 'none';
+                            if (customTokensHeader) customTokensHeader.style.display = 'none';
                             if (hasCampaignTokens) {
                                 campaignSection.style.display = 'block';
                             }
@@ -4052,6 +4070,8 @@ $settingsTabs = array_values(array_filter(
                             }
                         } else {
                             genericTokensContainer.style.display = 'flex';
+                            if (genericTsHeader) genericTsHeader.style.display = 'block';
+                            if (genericTsButtons) genericTsButtons.style.display = 'flex';
                             resetToGenericTokens();
                         }
                     }
@@ -4075,7 +4095,9 @@ $settingsTabs = array_values(array_filter(
                     
                     function resetToGenericTokens() {
                         const tokensContainer = document.getElementById('custom_tokens_buttons');
+                        const tsContainer = document.getElementById('generic_ts_tokens_buttons');
                         tokensContainer.innerHTML = '';
+                        if (tsContainer) tsContainer.innerHTML = '';
                         
                         for (let i = 1; i <= 20; i++) {
                             const tokenKey = `{token${i}}`;
@@ -4084,10 +4106,22 @@ $settingsTabs = array_values(array_filter(
                             button.className = 'custom-token-btn token-btn--builtin';
                             button.setAttribute('data-token', tokenKey);
                             button.onclick = function() { insertTokenAtCursor(tokenKey); };
-                            button.title = `Custom campaign token ${i}`;
+                            button.title = `Campaign custom token ${i}`;
                             button.textContent = tokenKey;
-                            
                             tokensContainer.appendChild(button);
+                        }
+                        if (tsContainer) {
+                            for (let i = 1; i <= 20; i++) {
+                                const tokenKey = `{ts_token${i}}`;
+                                const button = document.createElement('button');
+                                button.type = 'button';
+                                button.className = 'custom-token-btn token-btn--traffic-source';
+                                button.setAttribute('data-token', tokenKey);
+                                button.onclick = function() { insertTokenAtCursor(tokenKey); };
+                                button.title = `Traffic source token ${i}`;
+                                button.textContent = tokenKey;
+                                tsContainer.appendChild(button);
+                            }
                         }
                     }
                     </script>
@@ -5769,9 +5803,9 @@ $settingsTabs = array_values(array_filter(
 
                 <?php if ($lastUpdateCheck && $lastUpdateCheck['update_available'] && !empty($lastUpdateCheck['changelog'])): ?>
                     <!-- Changelog Display -->
-                    <div style="margin-top: 24px; padding: 20px; background: #f9f9f9; border-radius: 8px; border-left: 4px solid #f57c00;">
-                        <h3 style="margin: 0 0 16px 0; color: #3d5a26; font-size: 18px;">What's New in Version <?= htmlspecialchars($lastUpdateCheck['latest_version']) ?></h3>
-                        <div style="background: white; padding: 16px; border-radius: 6px; max-height: 400px; overflow-y: auto; font-size: 14px; line-height: 1.6; color: #333;">
+                    <div class="settings-update-notes-panel">
+                        <h3 class="settings-update-notes-panel__title">What's New in Version <?= htmlspecialchars($lastUpdateCheck['latest_version']) ?></h3>
+                        <div class="settings-update-notes">
                             <?php
                             // Parse and display changelog
                             // Release notes are remote content. Escape first, then add
@@ -5783,12 +5817,12 @@ $settingsTabs = array_values(array_filter(
                             );
                             
                             // If it's markdown, convert to HTML
-                            $changelog = preg_replace('/^### (.+)$/m', '<h4 style="margin: 16px 0 8px 0; color: #3d5a26; font-size: 16px; font-weight: 600;">$1</h4>', $changelog);
-                            $changelog = preg_replace('/^- (.+)$/m', '<li style="margin: 4px 0;">$1</li>', $changelog);
-                            $changelog = preg_replace('/^## (.+)$/m', '<h3 style="margin: 20px 0 12px 0; color: #3d5a26; font-size: 18px; font-weight: 600;">$1</h3>', $changelog);
+                            $changelog = preg_replace('/^### (.+)$/m', '<h4>$1</h4>', $changelog);
+                            $changelog = preg_replace('/^- (.+)$/m', '<li>$1</li>', $changelog);
+                            $changelog = preg_replace('/^## (.+)$/m', '<h3>$1</h3>', $changelog);
                             
                             // Wrap list items in ul tags
-                            $changelog = preg_replace('/(<li[^>]*>.*?<\/li>\s*)+/s', '<ul style="margin: 8px 0 16px 20px; padding: 0;">$0</ul>', $changelog);
+                            $changelog = preg_replace('/(<li[^>]*>.*?<\/li>\s*)+/s', '<ul>$0</ul>', $changelog);
                             
                             // Convert line breaks
                             $changelog = nl2br($changelog);
@@ -5797,9 +5831,9 @@ $settingsTabs = array_values(array_filter(
                             ?>
                         </div>
                         <?php if (!empty($lastUpdateCheck['requirements'])): ?>
-                            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #ddd;">
-                                <h4 style="margin: 0 0 8px 0; color: #666; font-size: 14px; font-weight: 600;">Requirements:</h4>
-                                <ul style="margin: 0; padding-left: 20px; color: #666; font-size: 13px;">
+                            <div class="settings-update-notes-panel__reqs">
+                                <h4>Requirements:</h4>
+                                <ul>
                                     <?php if (isset($lastUpdateCheck['requirements']['php_min'])): ?>
                                         <li>PHP <?= htmlspecialchars($lastUpdateCheck['requirements']['php_min']) ?> or higher</li>
                                     <?php endif; ?>

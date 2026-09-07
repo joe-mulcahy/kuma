@@ -18,6 +18,7 @@
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/../config/config.php';
 
+use SimpleKuma\Stats\CampaignStatsExpressions;
 use SimpleKuma\Stats\StatsViewExclusions;
 
 $db = new mysqli(DB_HOST, DB_USER, DB_PASSWORD, DB_NAME);
@@ -114,6 +115,7 @@ foreach ($datesToProcess as $summaryDate) {
                 SELECT * FROM clicks_archive WHERE DATE(ts) = ?) as cl'
             : '(SELECT * FROM clicks WHERE DATE(ts) = ?) as cl';
 
+        $convJoin = CampaignStatsExpressions::conversionsCountJoinAllEvents();
         $insertStmt = $db->prepare("
             INSERT INTO clicks_daily_summary
             (campaign_id, traffic_source_id, offer_id, landing_page_id, summary_date,
@@ -131,17 +133,17 @@ foreach ($datesToProcess as $summaryDate) {
                 COUNT(DISTINCT CASE
                     WHEN cl.lp_click = 1 AND cl.landing_page_id IS NULL THEN cl.id
                 END) as direct_clicks,
-                COUNT(DISTINCT conv.id) as conversions,
-                COALESCE(SUM(COALESCE(conv.payout, conv.value)), 0) as revenue,
+                COALESCE(SUM(conv.conversion_count), 0) as conversions,
+                COALESCE(SUM(conv.revenue_sum), 0) as revenue,
                 COALESCE(SUM(cl.cost), 0) as cost,
-                COALESCE(SUM(COALESCE(conv.payout, conv.value)), 0) - COALESCE(SUM(cl.cost), 0) as profit,
+                COALESCE(SUM(conv.revenue_sum), 0) - COALESCE(SUM(cl.cost), 0) as profit,
                 CASE
                     WHEN COALESCE(SUM(cl.cost), 0) > 0
-                    THEN ((COALESCE(SUM(COALESCE(conv.payout, conv.value)), 0) - COALESCE(SUM(cl.cost), 0)) / COALESCE(SUM(cl.cost), 0)) * 100
+                    THEN ((COALESCE(SUM(conv.revenue_sum), 0) - COALESCE(SUM(cl.cost), 0)) / COALESCE(SUM(cl.cost), 0)) * 100
                     ELSE NULL
                 END as roi
             FROM {$fromSql}
-            LEFT JOIN conversions conv ON cl.click_id = conv.click_id
+            {$convJoin}
             WHERE 1=1
               {$excl}
             GROUP BY cl.campaign_id, cl.traffic_source_id, cl.offer_id, cl.landing_page_id, DATE(cl.ts)

@@ -98,6 +98,7 @@ final class UpdateInstaller
                 $this->projectRoot,
                 $applyResult['files_copied']
             );
+            TreePermissionNormalizer::ensureLiveInstallNormalized($this->projectRoot, $this->db);
             $this->updateLogDetails(
                 $logId,
                 $applyResult['files_copied'],

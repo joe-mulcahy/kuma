@@ -49,6 +49,7 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
     <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-visitors.css">
     <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/conversion-log.css">
     <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-conversions.css">
+    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/email-optins.css?v=4">
     <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/campaign-list-filters.css">
     <!-- MOBILE CAMPAIGNS STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-campaigns.css -->
     <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-campaigns.css">
@@ -66,7 +67,7 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
     <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-billing.css">
     <!-- MOBILE SETTINGS STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-settings.css -->
     <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-settings.css">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/settings-layout.css?v=1">
+    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/settings-layout.css?v=2">
 </head>
 <body>
     <div class="app-wrapper">
@@ -127,6 +128,13 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
                                class="sidebar-nav-link <?= ($currentPage ?? '') === 'conversions' ? 'active' : '' ?>">
                                 <img src="<?= ASSETS_BASE_URL ?>/assets/images/conversionbear.png" alt="Conversion Log" class="sidebar-nav-icon">
                                 <span>Conversion Log</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
+                            <a href="<?= APP_BASE_URL ?>/index.php?page=email-optins"
+                               class="sidebar-nav-link <?= ($currentPage ?? '') === 'email-optins' ? 'active' : '' ?>">
+                                <img src="<?= ASSETS_BASE_URL ?>/assets/images/emailbear.png" alt="Email Opt-ins" class="sidebar-nav-icon">
+                                <span>Email Opt-ins</span>
                             </a>
                         </li>
                         <?php endif; ?>

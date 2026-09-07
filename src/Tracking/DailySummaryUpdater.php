@@ -119,6 +119,28 @@ class DailySummaryUpdater
     }
 
     /**
+     * mysqli bind types for one clicks_stats_by_token_daily INSERT row.
+     *
+     * Column order with optins + bot_clicks:
+     * campaign_id, summary_date, token_param, token_value, traffic_source_id,
+     * visitors, lp_clicks, cost, conversions, optins, revenue, bot_clicks
+     *
+     * optins is INT; revenue is DECIMAL(12,6). Swapping those two types truncates
+     * fractional payouts to whole dollars (typically 0) on every token/zone breakdown.
+     */
+    public static function tokenUpsertBindTypes(bool $hasBotClicks, bool $hasOptins): string
+    {
+        if ($hasBotClicks && $hasOptins) {
+            return 'isssiiidiidi';
+        }
+        if ($hasOptins) {
+            return 'isssiiidiid';
+        }
+
+        return 'isssiiidid';
+    }
+
+    /**
      * On-write: UPSERT clicks_stats_by_token_daily for one click (or conversion-only update).
      * Single multi-row INSERT per call. Pass extraData as array when available to avoid JSON decode.
      *
@@ -250,7 +272,7 @@ class DailySummaryUpdater
         foreach ($rows as $u) {
             if ($hasBotClicks && $hasOptins) {
                 $values[] = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-                $types .= 'isssiiididii';
+                $types .= self::tokenUpsertBindTypes(true, true);
                 $params[] = $u['campaign_id'];
                 $params[] = $u['summary_date'];
                 $params[] = $u['token_param'];
@@ -265,7 +287,7 @@ class DailySummaryUpdater
                 $params[] = $u['bot_clicks'];
             } elseif ($hasOptins) {
                 $values[] = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-                $types .= 'isssiiididi';
+                $types .= self::tokenUpsertBindTypes(false, true);
                 $params[] = $u['campaign_id'];
                 $params[] = $u['summary_date'];
                 $params[] = $u['token_param'];
@@ -279,7 +301,7 @@ class DailySummaryUpdater
                 $params[] = $u['revenue'];
             } else {
                 $values[] = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-                $types .= 'isssiiidid';
+                $types .= self::tokenUpsertBindTypes(false, false);
                 $params[] = $u['campaign_id'];
                 $params[] = $u['summary_date'];
                 $params[] = $u['token_param'];

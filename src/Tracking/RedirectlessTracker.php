@@ -326,82 +326,39 @@ class RedirectlessTracker
     }
 
     /**
-     * Capture cost from URL parameters
+     * Capture cost from URL parameters using the traffic source cost_param_key.
+     * Do not prefer a literal params.cost when the configured key is e.g. "price".
      */
     private function captureCost(array $campaign, array $params, ?int $trafficSourceId = null): ?array
     {
-        // If click has a hard cost in URL, use it for this click (takes precedence over everything)
-        if (isset($params['cost']) && $params['cost'] !== '' && is_numeric($params['cost'])) {
-            return [
-                'cost' => (float)$params['cost'],
-                'currency' => 'USD',
-            ];
+        $defaultCpc = $campaign['default_cpc'] ?? null;
+
+        if (!$trafficSourceId) {
+            return ClickCostResolver::resolve($params, 'cost', null, 'USD', $defaultCpc);
         }
 
-        // If no traffic source detected, return null or use default CPC
-        if (!$trafficSourceId) {
-            if (!empty($campaign['default_cpc'])) {
-                return [
-                    'cost' => (float)$campaign['default_cpc'],
-                    'currency' => 'USD',
-                ];
-            }
-            return null;
-        }
-        
-        // Get traffic source configuration
         $trafficSourceConfig = $this->getTrafficSourceConfig($trafficSourceId);
         if (!$trafficSourceConfig) {
-            if (!empty($campaign['default_cpc'])) {
-                return [
-                    'cost' => (float)$campaign['default_cpc'],
-                    'currency' => 'USD',
-                ];
-            }
-            return null;
+            return ClickCostResolver::resolve($params, 'cost', null, 'USD', $defaultCpc);
         }
-        
+
         $costMethod = $trafficSourceConfig['cost_tracking_method'] ?? 'manual_token';
+        $currency = $trafficSourceConfig['cost_currency'] ?? 'USD';
+        $costParamKey = !empty($trafficSourceConfig['cost_param_key'])
+            ? (string) $trafficSourceConfig['cost_param_key']
+            : 'cost';
 
-        // Check traffic source cost_param_key (e.g. if it's 'cpc' instead of 'cost') - already checked 'cost' above
-        $costParamKey = !empty($trafficSourceConfig['cost_param_key']) ? $trafficSourceConfig['cost_param_key'] : 'cost';
-        if ($costParamKey !== 'cost' && isset($params[$costParamKey]) && $params[$costParamKey] !== '' && is_numeric($params[$costParamKey])) {
-            return [
-                'cost' => (float)$params[$costParamKey],
-                'currency' => $trafficSourceConfig['cost_currency'] ?? 'USD',
-            ];
-        }
-
-        // If using integrated API, cost will be pulled from API later (not from URL params)
+        // Integrated API: still honor a keyed URL cost if present (usually "cost"), else default CPC.
         if ($costMethod === 'integrated_api') {
-            // For now, fall back to default CPC if available
-            if (!empty($campaign['default_cpc'])) {
-                return [
-                    'cost' => (float)$campaign['default_cpc'],
-                    'currency' => $trafficSourceConfig['cost_currency'] ?? 'USD',
-                ];
+            $fromUrl = ClickCostResolver::resolve($params, $costParamKey, null, $currency, null);
+            if ($fromUrl !== null) {
+                return $fromUrl;
             }
-            return null;
+
+            return ClickCostResolver::resolve([], null, null, $currency, $defaultCpc);
         }
 
-        // Manual token method: get cost from URL parameter
-        if (!empty($trafficSourceConfig['cost_param_key']) && isset($params[$trafficSourceConfig['cost_param_key']])) {
-            // Cost provided in URL
-            return [
-                'cost' => (float)$params[$trafficSourceConfig['cost_param_key']],
-                'currency' => $trafficSourceConfig['cost_currency'] ?? 'USD',
-            ];
-        }
-
-        // Use default CPC if no cost param found
-        if (!empty($campaign['default_cpc'])) {
-            return [
-                'cost' => (float)$campaign['default_cpc'],
-                'currency' => $trafficSourceConfig['cost_currency'] ?? 'USD',
-            ];
-        }
-
-        return null;
+        return ClickCostResolver::resolve($params, $costParamKey, null, $currency, $defaultCpc);
     }
 
     /**

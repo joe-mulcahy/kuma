@@ -25,6 +25,19 @@ final class TreePermissionNormalizer
     ];
 
     /**
+     * Directory prefixes (relative, forward-slash, with trailing slash) left untouched.
+     * storage/ holds runtime cache, logs, and backups that may be group-writable on purpose.
+     *
+     * @var list<string>
+     */
+    private const SKIP_PREFIXES = [
+        'storage/',
+        '.git/',
+    ];
+
+    public const SETTINGS_KEY = 'tree_permissions_normalized';
+
+    /**
      * Recursively chmod directories to 0755 and files to 0644 under $root.
      * Skips Windows (chmod is not meaningful for this threat model there).
      */
@@ -61,6 +74,28 @@ final class TreePermissionNormalizer
     }
 
     /**
+     * One-shot chmod of the live install root. Skips Windows, config.php, and storage/.
+     * Safe to call from admin bootstrap and the updater; no-ops after the settings flag is set.
+     */
+    public static function ensureLiveInstallNormalized(string $root, \mysqli $db): void
+    {
+        if (PHP_OS_FAMILY === 'Windows' || !is_dir($root)) {
+            return;
+        }
+
+        try {
+            $settings = new \SimpleKuma\Settings\SettingsManager($db);
+            if ((string) $settings->get(self::SETTINGS_KEY, '') === '1') {
+                return;
+            }
+            self::normalizeTree($root);
+            $settings->set(self::SETTINGS_KEY, '1');
+        } catch (\Throwable $e) {
+            error_log('TreePermissionNormalizer: live install normalize failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
      * @param list<string> $relativePaths Forward-slash paths relative to $installRoot
      */
     public static function normalizeRelativeFiles(string $installRoot, array $relativePaths): void
@@ -78,6 +113,16 @@ final class TreePermissionNormalizer
         foreach ($relativePaths as $rel) {
             $rel = str_replace('\\', '/', ltrim($rel, '/'));
             if ($rel === '' || in_array($rel, self::SKIP_RELATIVE, true)) {
+                continue;
+            }
+            $skipPrefixed = false;
+            foreach (self::SKIP_PREFIXES as $prefix) {
+                if (str_starts_with($rel, $prefix)) {
+                    $skipPrefixed = true;
+                    break;
+                }
+            }
+            if ($skipPrefixed) {
                 continue;
             }
             $full = $rootReal . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $rel);
@@ -104,9 +149,16 @@ final class TreePermissionNormalizer
     {
         $normalized = str_replace('\\', '/', $path);
         $rootNorm = str_replace('\\', '/', $rootReal);
+        $rel = ltrim(substr($normalized, strlen($rootNorm)), '/');
         foreach (self::SKIP_RELATIVE as $skip) {
             $target = $rootNorm . '/' . $skip;
             if ($normalized === $target || str_ends_with($normalized, '/' . $skip)) {
+                return true;
+            }
+        }
+        foreach (self::SKIP_PREFIXES as $prefix) {
+            $dir = rtrim($prefix, '/');
+            if ($rel === $dir || str_starts_with($rel, $prefix)) {
                 return true;
             }
         }

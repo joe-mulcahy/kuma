@@ -4250,6 +4250,17 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
         }
 
         // Function to update tracking link with selected traffic source (for auto-detect campaigns)
+        function trafficSourceTokensIncludeParam(tokens, costParam) {
+            if (!costParam || !Array.isArray(tokens)) {
+                return false;
+            }
+            const key = String(costParam).toLowerCase();
+            return tokens.some(function(token) {
+                const parameter = String((token && (token.parameter || token.key)) || '').toLowerCase();
+                return parameter === key;
+            });
+        }
+
         function updateTrackingLinkWithTrafficSource() {
             const trafficSourceSelect = document.getElementById('link-traffic-source-select');
             const trackingUrlElement = document.getElementById('full-tracking-url');
@@ -4297,8 +4308,8 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             // This tells Kuma to use this specific traffic source, overriding campaign default if any
             params.push('Tf=' + trafficSourceId);
             
-            // Add cost parameter if specified
-            if (costParam) {
+            // Add cost parameter if specified and not already present as a TS token
+            if (costParam && !trafficSourceTokensIncludeParam(tokens, costParam)) {
                 params.push(costParam + '={value}');
             }
             
@@ -4416,8 +4427,8 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             // Build URL with all parameters (using slug URL if selected)
             const params = [];
             
-            // Add cost parameter if specified
-            if (costParam) {
+            // Add cost parameter if specified and not already present as a TS token
+            if (costParam && !trafficSourceTokensIncludeParam(tokens, costParam)) {
                 params.push(costParam + '={value}');
             }
             
@@ -4848,7 +4859,7 @@ if (!empty(\$_GET['click_id'])) {
                 }
                 
                 // Add cost parameter if specified (after traffic source tokens)
-                if (costParam) {
+                if (costParam && !trafficSourceTokensIncludeParam(tokens, costParam)) {
                     params.push(costParam + '={value}');
                 }
                 
@@ -4944,7 +4955,7 @@ var kumaConfig = { "root": "${trackingDomainUrl}/", };
                 }
                 
                 // Add cost parameter if specified
-                if (costParam) {
+                if (costParam && !trafficSourceTokensIncludeParam(tokens, costParam)) {
                     paramAssignments.push(`$params['${costParam}'] = '{value}'; // Cost parameter`);
                 }
                 

@@ -1,4 +1,49 @@
-# Simple Kuma Tracker Version 1.1.5.20
+# Simple Kuma Tracker Version 1.1.5.21
+
+## Changes in 1.1.5.21
+
+### Fix: Token daily revenue no longer stored as an integer
+- Token-level daily summaries bind revenue as a decimal so conversion cents are not truncated
+- New conversions keep correct revenue going forward
+- Do **not** run a full-history token-daily rebuild on existing installs
+
+### Fix: Edge / redirectless cost uses the traffic source cost key
+- Clicks honor `cost_param_key` (e.g. TrafficStars `price`) instead of a leftover CPM/`cost` field
+- Redirectless tracking uses the same resolver as Edge ingest
+- **Redeploy the Cloudflare Worker** after this upgrade if you use Edge Redirect (the updater does not push Workers)
+
+### Fix: Daily summary and billing cost no longer multiplies across conversions
+- Cron, backfill, and billing campaign rows count conversions 1:1 so `SUM(clicks.cost)` is not fan-out by multiple events on the same click
+
+### Fix: Token daily rebuild leaves purged history alone
+- Rebuilding a UTC day skips DELETE when raw + archive clicks are empty, so pre-aggregated token history survives retention
+
+### Security: Leftover world-writable files healed on login and update
+- Live installs normalize tree permissions after auth, in-app update, and apply-release-upgrade
+- Skips `config/config.php`, `storage/`, and `.git/`; no-op on Windows
+
+### Token pickers insert `{ts_tokenN}`
+- Custom postbacks and offer URL pickers insert `{ts_tokenN}` (saved templates and URLs are unchanged)
+
+### Tracking links: no duplicate cost token
+- Campaign tracking links skip appending `cost=` when the traffic source already uses `cost_param_key` (PropellerAds and similar)
+
+### Performance: REST campaign list no longer raw-scans clicks
+- `GET /api/v1/stats/campaigns` uses list stats with Meta/Google cost overlay off
+- The Campaigns UI still overlays hourly FB/GA costs
+
+### Visitor Log: Last month no longer times out
+- Count and page load no longer join every conversion over a large date range
+- Uses a lean id-first page + cover indexes; Conversion Log is unchanged
+
+### Email Opt-ins page and Click Lookup card
+- New **Email Opt-ins** page (sidebar under Conversion Log): visitors, opt-ins, opt-in %, cost / opt-in, daily chart, campaign table, event list
+- Click Lookup shows a dedicated Email opt-in card; purchase conversions stay in their own section
+- Email is shown only if it was already on the click or postback — no new email column or lead CRM
+- Campaign Stats columns and Hermes queries are unchanged
+
+### Updates tab: release notes readable in dark mode
+- What’s New notes use theme tokens instead of a white box with remapped light text
 
 ## Changes in 1.1.5.20
 

@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace SimpleKuma\Stats;
 
 use mysqli;
-use SimpleKuma\Database\ClicksTableResolver;
-use SimpleKuma\Utils\Formatter;
 
 /**
  * Focused campaign stats for API v1.
@@ -25,63 +23,45 @@ class CampaignStatsService
      */
     public function getCampaignStats(?int $campaignId, string $dateFrom, string $dateTo, string $timezone): array
     {
-        $utcRange = Formatter::convertDateRangeToUTC($dateFrom, $dateTo, $timezone);
-        $clicksTable = ClicksTableResolver::getStatsTable($this->db);
-        $usePersistedFlag = StatsExclusionFlag::columnExists($this->db, $clicksTable);
-        $includedJoin = $usePersistedFlag ? ' AND cl.exclude_from_stats = 0' : '';
-
-        $visitors = CampaignStatsExpressions::visitorCountExpr('cl', 'ts', $usePersistedFlag);
-        $lpClicks = CampaignStatsExpressions::lpClicksCountExpr('cl', 'ts', $usePersistedFlag);
-        $conversions = CampaignStatsExpressions::conversionsCountExpr('cl', 'ts', $usePersistedFlag);
-
-        $sql = "
-            SELECT
-                cp.id AS campaign_id,
-                cp.name AS campaign_name,
-                cp.status,
-                {$visitors} AS clicks,
-                {$lpClicks} AS lp_clicks,
-                {$conversions} AS conversions,
-                COALESCE(SUM(cl.cost), 0) AS cost,
-                COALESCE(SUM(conv.revenue_sum), 0) AS revenue
-            FROM campaigns cp
-            LEFT JOIN {$clicksTable} cl ON cl.campaign_id = cp.id
-                AND cl.ts >= ? AND cl.ts <= ?{$includedJoin}
-            LEFT JOIN traffic_sources ts ON cp.traffic_source_id = ts.id
-            " . CampaignStatsExpressions::conversionsAggJoin() . "
-        ";
-
-        $params = [$utcRange['from'], $utcRange['to']];
-        $types = 'ss';
-
-        if ($campaignId !== null) {
-            $sql .= ' WHERE cp.id = ?';
-            $params[] = $campaignId;
-            $types .= 'i';
+        $campaigns = $this->loadCampaignRows($campaignId);
+        if ($campaigns === []) {
+            return [];
         }
 
-        $sql .= ' GROUP BY cp.id, cp.name, cp.status ORDER BY cp.name ASC';
-
-        $stmt = $this->db->prepare($sql);
-        $stmt->bind_param($types, ...$params);
-        $stmt->execute();
-        $result = $stmt->get_result();
+        $ids = array_map(static fn (array $row): int => (int) $row['id'], $campaigns);
+        $metrics = (new CampaignListStatsService($this->db))->loadStatsForCampaignIds(
+            $ids,
+            $dateFrom,
+            $dateTo,
+            $timezone,
+            false
+        );
 
         $rows = [];
-        while ($row = $result->fetch_assoc()) {
-            $clicks = (int)$row['clicks'];
-            $lpClicks = (int)($row['lp_clicks'] ?? 0);
-            $conversions = (int)$row['conversions'];
-            $cost = (float)$row['cost'];
-            $revenue = (float)$row['revenue'];
-            $profit = $revenue - $cost;
-            $roi = $cost > 0 ? (($revenue - $cost) / $cost) * 100 : 0.0;
+        foreach ($campaigns as $campaign) {
+            $id = (int) $campaign['id'];
+            $m = $metrics[$id] ?? [
+                'views' => 0,
+                'lp_clicks' => 0,
+                'conversions' => 0,
+                'cost' => 0.0,
+                'revenue' => 0.0,
+                'profit' => 0.0,
+                'roi' => 0.0,
+            ];
+            $clicks = (int) $m['views'];
+            $lpClicks = (int) $m['lp_clicks'];
+            $conversions = (int) $m['conversions'];
+            $cost = (float) $m['cost'];
+            $revenue = (float) $m['revenue'];
+            $profit = (float) $m['profit'];
+            $roi = (float) $m['roi'];
             $cr = $clicks > 0 ? ($conversions / $clicks) * 100 : 0.0;
 
             $rows[] = [
-                'campaign_id' => (int)$row['campaign_id'],
-                'campaign_name' => $row['campaign_name'],
-                'status' => $row['status'],
+                'campaign_id' => $id,
+                'campaign_name' => $campaign['name'],
+                'status' => $campaign['status'],
                 'clicks' => $clicks,
                 'lp_clicks' => $lpClicks,
                 'conversions' => $conversions,
@@ -94,6 +74,39 @@ class CampaignStatsService
                 'date_to' => $dateTo,
                 'timezone' => $timezone,
             ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @return list<array{id: int, name: string, status: string}>
+     */
+    private function loadCampaignRows(?int $campaignId): array
+    {
+        if ($campaignId !== null) {
+            $stmt = $this->db->prepare(
+                'SELECT id, name, status FROM campaigns WHERE id = ? LIMIT 1'
+            );
+            if ($stmt === false) {
+                return [];
+            }
+            $stmt->bind_param('i', $campaignId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            return $row ? [$row] : [];
+        }
+
+        $result = $this->db->query('SELECT id, name, status FROM campaigns ORDER BY name ASC');
+        if ($result === false) {
+            return [];
+        }
+
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
         }
 
         return $rows;

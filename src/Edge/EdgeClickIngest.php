@@ -6,6 +6,7 @@ namespace SimpleKuma\Edge;
 
 use mysqli;
 use SimpleKuma\Entity\Campaign;
+use SimpleKuma\Tracking\ClickCostResolver;
 use SimpleKuma\Tracking\ClickRecorder;
 
 /**
@@ -69,13 +70,23 @@ final class EdgeClickIngest
         }
 
         $params = is_array($payload['params'] ?? null) ? $payload['params'] : [];
-        $cost = null;
-        if (isset($payload['cost']) && is_numeric($payload['cost'])) {
-            $cost = [
-                'cost' => (float) $payload['cost'],
-                'currency' => isset($payload['cost_currency']) ? (string) $payload['cost_currency'] : 'USD',
-            ];
+        $trafficSourceId = isset($payload['traffic_source_id'])
+            ? (int) $payload['traffic_source_id']
+            : (!empty($campaign['traffic_source_id']) ? (int) $campaign['traffic_source_id'] : null);
+        $costParamKey = null;
+        try {
+            $costParamKey = $this->loadCostParamKey($trafficSourceId);
+        } catch (\Throwable $e) {
+            // Never fail ingest over a cost-key lookup; fall back to payload.cost / default CPC.
+            error_log('EdgeClickIngest: cost_param_key lookup failed: ' . $e->getMessage());
         }
+        $cost = ClickCostResolver::resolve(
+            $params,
+            $costParamKey,
+            $payload['cost'] ?? null,
+            isset($payload['cost_currency']) ? (string) $payload['cost_currency'] : 'USD',
+            $campaign['default_cpc'] ?? null
+        );
 
         $recorder = new ClickRecorder($this->db);
         $result = $recorder->record([
@@ -87,9 +98,7 @@ final class EdgeClickIngest
             'is_direct_to_offer' => !empty($payload['is_direct_to_offer']),
             'offer_id' => isset($payload['offer_id']) ? (int) $payload['offer_id'] : null,
             'landing_page_id' => isset($payload['landing_page_id']) ? (int) $payload['landing_page_id'] : null,
-            'traffic_source_id' => isset($payload['traffic_source_id'])
-                ? (int) $payload['traffic_source_id']
-                : (!empty($campaign['traffic_source_id']) ? (int) $campaign['traffic_source_id'] : null),
+            'traffic_source_id' => $trafficSourceId,
             'slug_id' => isset($payload['slug_id']) ? (int) $payload['slug_id'] : null,
             'redirect_rule_matched' => !empty($payload['redirect_rule_matched']),
             'ip' => isset($payload['ip']) ? (string) $payload['ip'] : null,
@@ -155,6 +164,30 @@ final class EdgeClickIngest
         }
 
         return $bearerOk;
+    }
+
+    private function loadCostParamKey(?int $trafficSourceId): ?string
+    {
+        if ($trafficSourceId === null || $trafficSourceId <= 0) {
+            return null;
+        }
+        $stmt = $this->db->prepare('SELECT cost_param_key FROM traffic_sources WHERE id = ? LIMIT 1');
+        if ($stmt === false) {
+            return null;
+        }
+        $stmt->bind_param('i', $trafficSourceId);
+        if (!$stmt->execute()) {
+            $stmt->close();
+            return null;
+        }
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            return null;
+        }
+        $key = trim((string) ($row['cost_param_key'] ?? ''));
+
+        return $key !== '' ? $key : null;
     }
 
     /**

@@ -47,7 +47,8 @@ final class CampaignListStatsService
         array $campaignIds,
         string $dateFrom,
         string $dateTo,
-        string $userTimezone
+        string $userTimezone,
+        bool $includeApiCosts = true
     ): array {
         $campaignIds = array_values(array_unique(array_filter(array_map('intval', $campaignIds))));
         $empty = [];
@@ -100,9 +101,13 @@ final class CampaignListStatsService
 
         // Match DashboardStatsService: FB/GA aggregators only for API-cost campaigns.
         // Manual campaigns keep summary/raw manual_cost (no 10s+ allocator scan).
-        $costMaps = $this->batchApiCosts($idsForCost, $utcFrom, $utcTo, $userTimezone);
-        $fbCostMap = $costMaps['fb'];
-        $gaCostMap = $costMaps['ga'];
+        $fbCostMap = [];
+        $gaCostMap = [];
+        if ($includeApiCosts) {
+            $costMaps = $this->batchApiCosts($idsForCost, $utcFrom, $utcTo, $userTimezone);
+            $fbCostMap = $costMaps['fb'];
+            $gaCostMap = $costMaps['ga'];
+        }
 
         $out = $empty;
         foreach ($campaignIds as $id) {

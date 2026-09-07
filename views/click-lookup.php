@@ -2,6 +2,10 @@
 // Click Lookup Page
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../src/Utils/Formatter.php';
+require_once __DIR__ . '/../src/Tracking/ConversionOptInClassifier.php';
+require_once __DIR__ . '/../src/Tracking/OptInEmailExtractor.php';
+use SimpleKuma\Tracking\ConversionOptInClassifier;
+use SimpleKuma\Tracking\OptInEmailExtractor;
 use SimpleKuma\Utils\Formatter;
 
 // Use the global database connection if available, otherwise create a new one
@@ -507,6 +511,57 @@ if (!empty($clickId)) {
             </div>
             <?php endif; ?>
             
+            <?php
+            $optInEvents = [];
+            $purchaseEvents = [];
+            foreach ($conversions as $conv) {
+                if (ConversionOptInClassifier::isOptIn($conv['event_key'] ?? null)) {
+                    $optInEvents[] = $conv;
+                } else {
+                    $purchaseEvents[] = $conv;
+                }
+            }
+            $clickExtra = is_array($clickData['extra_json_parsed'] ?? null) ? $clickData['extra_json_parsed'] : [];
+            ?>
+            <div class="email-optin-card">
+                <div class="email-optin-card__header">
+                    <img src="<?= ASSETS_BASE_URL ?>/assets/images/emailbear.png" alt="">
+                    <h2>Email opt-in<?= $optInEvents !== [] ? ' (' . count($optInEvents) . ')' : '' ?></h2>
+                </div>
+                <div class="email-optin-card__body">
+                    <?php if ($optInEvents === []): ?>
+                        <p class="email-optin-card__empty">No email opt-in on this click. Opt-ins use event keys optin, email, lead, or subscribe.</p>
+                    <?php else: ?>
+                        <?php foreach ($optInEvents as $optIn): ?>
+                            <?php
+                            $sourceBag = !empty($optIn['source_json'])
+                                ? (json_decode((string) $optIn['source_json'], true) ?: [])
+                                : [];
+                            $optInEmail = OptInEmailExtractor::fromBags($sourceBag, $clickExtra);
+                            ?>
+                            <dl class="email-optin-event">
+                                <div>
+                                    <dt>Event</dt>
+                                    <dd><?= htmlspecialchars((string) ($optIn['event_key'] ?? 'optin')) ?></dd>
+                                </div>
+                                <div>
+                                    <dt>Time</dt>
+                                    <dd><?= htmlspecialchars(Formatter::formatDateTime($optIn['ts'], $userTimezone)) ?></dd>
+                                </div>
+                                <div>
+                                    <dt>Status</dt>
+                                    <dd><?= htmlspecialchars(ucfirst((string) ($optIn['status'] ?? ''))) ?></dd>
+                                </div>
+                                <div>
+                                    <dt>Email</dt>
+                                    <dd class="email-optin-event__email"><?= $optInEmail !== null ? htmlspecialchars($optInEmail) : 'Not sent on this postback' ?></dd>
+                                </div>
+                            </dl>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+            </div>
+
             <!-- Extra JSON Data -->
             <?php if (!empty($clickData['extra_json_parsed'])): ?>
             <div class="card" style="margin-bottom: 24px;">
@@ -520,14 +575,14 @@ if (!empty($clickId)) {
             <?php endif; ?>
             
             <!-- Conversions -->
-            <?php if (!empty($conversions)): ?>
+            <?php if (!empty($purchaseEvents)): ?>
             <div class="card" style="margin-bottom: 24px;">
                 <div class="card-header" style="background: #f5f5f5; padding: 16px; border-bottom: 2px solid #ddd;">
-                    <h2 style="margin: 0; font-size: 20px; color: #333;">Conversions (<?= count($conversions) ?>)</h2>
+                    <h2 style="margin: 0; font-size: 20px; color: #333;">Conversions (<?= count($purchaseEvents) ?>)</h2>
                 </div>
                 <div class="card-body" style="padding: 20px;">
-                    <?php foreach ($conversions as $index => $conv): ?>
-                        <div class="card" style="margin-bottom: <?= $index < count($conversions) - 1 ? '16px' : '0' ?>; border: 1px solid #ddd;">
+                    <?php foreach ($purchaseEvents as $index => $conv): ?>
+                        <div class="card" style="margin-bottom: <?= $index < count($purchaseEvents) - 1 ? '16px' : '0' ?>; border: 1px solid #ddd;">
                             <div class="card-body" style="padding: 16px;">
                                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
                                     <div>
@@ -597,7 +652,7 @@ if (!empty($clickId)) {
             <?php else: ?>
             <div class="card" style="margin-bottom: 24px;">
                 <div class="card-body" style="padding: 20px; text-align: center; color: #999;">
-                    No conversions found for this click.
+                    No purchase conversions on this click.<?= $optInEvents !== [] ? ' Email opt-ins are listed above.' : '' ?>
                 </div>
             </div>
             <?php endif; ?>

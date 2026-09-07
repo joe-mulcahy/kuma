@@ -183,6 +183,7 @@ if ($runMigrations) {
             $report['ok'] = false;
             $report['errors'] = array_merge($report['errors'], $runner->getErrors());
         }
+        \SimpleKuma\Update\TreePermissionNormalizer::ensureLiveInstallNormalized($installRoot, $db);
         $db->close();
     }
 } elseif ($applyFiles) {

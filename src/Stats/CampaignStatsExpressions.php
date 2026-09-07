@@ -319,6 +319,22 @@ class CampaignStatsExpressions
         ) conv ON conv.click_id = {$clAlias}.click_id";
     }
 
+    /**
+     * 1:1 conversions join that keeps every conversions row (including opt-ins)
+     * in conversion_count / revenue_sum. Used by the daily-summary cron so we
+     * fix SUM(cl.cost) fan-out without changing how that rebuild counts events.
+     */
+    public static function conversionsCountJoinAllEvents(string $clAlias = 'cl'): string
+    {
+        return "LEFT JOIN (
+            SELECT click_id,
+                   COUNT(*) AS conversion_count,
+                   COALESCE(SUM(COALESCE(payout, value)), 0) AS revenue_sum
+            FROM conversions
+            GROUP BY click_id
+        ) conv ON conv.click_id = {$clAlias}.click_id";
+    }
+
     public static function optinsCountExpr(
         string $clAlias = 'cl',
         string $tsAlias = 'ts',

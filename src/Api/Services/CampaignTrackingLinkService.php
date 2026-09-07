@@ -53,8 +53,8 @@ class CampaignTrackingLinkService
                 }
             }
 
-            $costParam = $trafficSource['cost_param_key'] ?? '';
-            if ($costParam !== '') {
+            $costParam = trim((string) ($trafficSource['cost_param_key'] ?? ''));
+            if ($costParam !== '' && !self::tokensAlreadyIncludeParam($tsTokens, $costParam)) {
                 $params[] = $costParam . '={value}';
                 $tokenLabels[] = $costParam;
             }
@@ -96,5 +96,26 @@ class CampaignTrackingLinkService
         }
 
         return $this->build($campaign, $ts, $slug);
+    }
+
+    /**
+     * @param mixed $tokens
+     */
+    public static function tokensAlreadyIncludeParam($tokens, string $param): bool
+    {
+        if ($param === '' || !is_array($tokens)) {
+            return false;
+        }
+        foreach ($tokens as $token) {
+            if (!is_array($token)) {
+                continue;
+            }
+            $parameter = (string) ($token['parameter'] ?? $token['key'] ?? '');
+            if ($parameter !== '' && strcasecmp($parameter, $param) === 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

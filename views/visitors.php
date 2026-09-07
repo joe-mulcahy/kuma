@@ -62,7 +62,6 @@ $userCurrency = $GLOBALS['userCurrency'] ?? 'USD';
 // Pagination
 $page = isset($_GET['p']) ? max(1, (int)$_GET['p']) : 1;
 $perPage = isset($_GET['per_page_limit']) ? (int)$_GET['per_page_limit'] : 50;
-$offset = ($page - 1) * $perPage;
 
 // Filters
 $campaignFilter = isset($_GET['campaign']) ? (int)$_GET['campaign'] : null;
@@ -92,126 +91,19 @@ $utcDateRange = Formatter::convertDateRangeToUTC($dateFrom, $dateTo, $userTimezo
 $utcDateFrom = $utcDateRange['from'];
 $utcDateTo = $utcDateRange['to'];
 
-// Build WHERE clause
-$where = ["cl.ts >= ? AND cl.ts <= ?"];
-$params = [$utcDateFrom, $utcDateTo];
-$types = 'ss';
-
-if ($campaignFilter) {
-    $where[] = "cl.campaign_id = ?";
-    $params[] = $campaignFilter;
-    $types .= 'i';
-}
-
-if ($hasConversion === '1' || $hasConversion === 1) {
-    $where[] = "conv.id IS NOT NULL";
-} elseif ($hasConversion === 'clicked' || $hasConversion === 2) {
-    $where[] = "cl.lp_click = TRUE";
-}
-
-// Check if traffic_source_id column exists in clicks table (needed for filter logic)
-$trafficSourceColumnExists = false;
-$checkColumn = $db->query("SELECT COUNT(*) as count FROM information_schema.COLUMNS 
-                            WHERE TABLE_SCHEMA = DATABASE() 
-                            AND TABLE_NAME = 'clicks' 
-                            AND COLUMN_NAME = 'traffic_source_id'");
-if ($checkColumn && $row = $checkColumn->fetch_assoc()) {
-    $trafficSourceColumnExists = ((int)$row['count'] > 0);
-}
-
-// Filter out Facebook approval team clicks (aligned with CampaignStatsExpressions)
-if ($excludeFbApprovalTeam) {
-    if (\SimpleKuma\Stats\StatsExclusionFlag::columnExists($db)) {
-        $where[] = 'cl.exclude_from_stats = 0';
-    } elseif ($trafficSourceColumnExists) {
-        $where[] = \SimpleKuma\Stats\CampaignStatsExpressions::excludeInvalidClickWhere('cl');
-    } else {
-        $where[] = "NOT (
-            EXISTS (
-                SELECT 1 FROM campaigns cp_filter 
-                INNER JOIN traffic_sources ts_filter ON cp_filter.traffic_source_id = ts_filter.id
-                WHERE cp_filter.id = cl.campaign_id AND ts_filter.id = 4
-            ) AND (
-                JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.ad_id')) IS NULL 
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.ad_id')) = ''
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.ad_id')) = 'null'
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.ad_id')) LIKE '{{%'
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.ad_id')) LIKE '{ts:%'
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.adset_id')) IS NULL
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.adset_id')) = ''
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.adset_id')) = 'null'
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.adset_id')) LIKE '{{%'
-                OR JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.adset_id')) LIKE '{ts:%'
-            )
-        )";
-        $where[] = "cl.ua NOT LIKE '%facebookexternalhit/1.1%'";
-    }
-}
-
-// Always omit account-wide stats-hidden IPs from the visitor log
-try {
-    $hiddenIpSql = (new \SimpleKuma\Stats\StatsHiddenIpService($db))->exclusionSql('cl');
-    if ($hiddenIpSql !== '') {
-        $where[] = $hiddenIpSql;
-    }
-} catch (\Throwable $e) {
-    // ignore if migration not applied
-}
-
-$whereClause = implode(' AND ', $where);
-
-// Count total
-$countSql = "SELECT COUNT(*) as total 
-             FROM clicks cl
-             LEFT JOIN conversions conv ON cl.click_id = conv.click_id
-             WHERE {$whereClause}";
-$stmt = $db->prepare($countSql);
-$stmt->bind_param($types, ...$params);
-$stmt->execute();
-$totalRows = $stmt->get_result()->fetch_assoc()['total'];
-$totalPages = ceil($totalRows / $perPage);
-
-// Fetch clicks with offer and landing page names
-// Use COALESCE to get traffic source from click or campaign
-// Note: cp_ts is used in the WHERE clause for the exclude_fb_approval filter
-$sql = "SELECT 
-            cl.*,
-            cp.name as campaign_name,
-            " . ($trafficSourceColumnExists 
-                ? "COALESCE(ts.name, cp_ts.name) as traffic_source_name"
-                : "cp_ts.name as traffic_source_name") . ",
-            o.name as offer_name,
-            lp.name as landing_page_name,
-            conv.value as conv_value,
-            conv.payout as conv_payout,
-            conv.currency as conv_currency,
-            conv.id as has_conversion
-        FROM clicks cl
-        INNER JOIN campaigns cp ON cl.campaign_id = cp.id
-        LEFT JOIN traffic_sources cp_ts ON cp.traffic_source_id = cp_ts.id" . 
-        ($trafficSourceColumnExists ? "
-        LEFT JOIN traffic_sources ts ON cl.traffic_source_id = ts.id" : "") . "
-        LEFT JOIN offers o ON cl.offer_id = o.id
-        LEFT JOIN landing_pages lp ON cl.landing_page_id = lp.id
-        LEFT JOIN conversions conv ON cl.click_id = conv.click_id
-        WHERE {$whereClause}
-        ORDER BY cl.ts DESC
-        LIMIT ? OFFSET ?";
-
-$params[] = $perPage;
-$params[] = $offset;
-$types .= 'ii';
-
-$stmt = $db->prepare($sql);
-$stmt->bind_param($types, ...$params);
-$stmt->execute();
-$result = $stmt->get_result();
-
-// Fetch clicks
-$clicks = [];
-while ($row = $result->fetch_assoc()) {
-    $clicks[] = $row;
-}
+$visitorLog = new \SimpleKuma\Stats\VisitorLogQueryService($db);
+$visitorPage = $visitorLog->list([
+    'utc_from' => $utcDateFrom,
+    'utc_to' => $utcDateTo,
+    'campaign_id' => $campaignFilter,
+    'has_conversion' => $hasConversion,
+    'exclude_fb_approval' => $excludeFbApprovalTeam,
+    'page' => $page,
+    'per_page' => $perPage,
+]);
+$clicks = $visitorPage['rows'];
+$totalRows = $visitorPage['total'];
+$totalPages = (int) ceil($totalRows / $perPage);
 
 // Get campaigns for filter
 $campaigns = $db->query("SELECT id, name FROM campaigns ORDER BY name")->fetch_all(MYSQLI_ASSOC);

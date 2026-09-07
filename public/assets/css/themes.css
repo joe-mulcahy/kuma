@@ -689,12 +689,16 @@ body.auth-page .login-header .retro-text {
 [data-theme-base="dark"] [style*="background:#fff"],
 [data-theme-base="dark"] [style*="background: #ffffff"],
 [data-theme-base="dark"] [style*="background:#ffffff"],
+[data-theme-base="dark"] [style*="background: white"],
+[data-theme-base="dark"] [style*="background:white"],
 [data-theme-base="dark"] [style*="background: rgb(255, 255, 255)"],
 [data-theme-base="dark"] [style*="background:rgb(255, 255, 255)"],
 [data-theme-base="dark"] [style*="background-color: #ffffff"],
 [data-theme-base="dark"] [style*="background-color:#ffffff"],
 [data-theme-base="dark"] [style*="background-color: #fff"],
-[data-theme-base="dark"] [style*="background-color:#fff"] {
+[data-theme-base="dark"] [style*="background-color:#fff"],
+[data-theme-base="dark"] [style*="background-color: white"],
+[data-theme-base="dark"] [style*="background-color:white"] {
     background: var(--color-white) !important;
 }
 
