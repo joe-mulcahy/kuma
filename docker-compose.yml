@@ -24,8 +24,8 @@ services:
     environment:
       MYSQL_DATABASE: simplekuma
       MYSQL_USER: kuma
-      MYSQL_PASSWORD: kuma
-      MYSQL_ROOT_PASSWORD: rootsecret
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     volumes:
       - kuma_mysql:/var/lib/mysql
     healthcheck:
