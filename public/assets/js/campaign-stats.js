@@ -882,6 +882,19 @@
 
         renderOverviewEfficiency(data);
 
+        const eventRows = Array.isArray(data.event_breakdown) ? data.event_breakdown : [];
+        const eventCard = document.getElementById('stats-v2-event-breakdown-card');
+        const eventBody = document.getElementById('stats-v2-event-breakdown');
+        if (eventCard && eventBody) {
+            eventCard.style.display = eventRows.length ? '' : 'none';
+            eventBody.innerHTML = eventRows.map((row) => {
+                const rate = Number(data.visitors || 0) > 0 ? (Number(row.unique_clicks || 0) / Number(data.visitors)) * 100 : 0;
+                const event = escapeHtml(String(row.event_type || 'conversion').replaceAll('_', ' '));
+                const classification = escapeHtml(String(row.event_classification || 'generic_conversion').replaceAll('_', ' '));
+                return `<tr><td>${event}</td><td><span class="badge">${classification}</span></td><td>${Number(row.count || 0).toLocaleString()}</td><td>${Number(row.unique_clicks || 0).toLocaleString()}</td><td>${fmtPct(rate)}</td><td>${fmtMoney(Number(row.revenue || 0))}</td></tr>`;
+            }).join('');
+        }
+
         return data;
     }
 

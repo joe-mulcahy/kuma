@@ -118,10 +118,12 @@ $defaultHost = parse_url(BASE_URL, PHP_URL_HOST) ?: 'Current Domain';
                     Configure event mapping on your Meta CAPI integration, then send distinct <code class="postback-inline-code">et</code> values with unique <code class="postback-inline-code">txid</code>s:
                 </p>
                 <div class="postback-network-examples">
-                    <div>Register: .../postback.php?click_id=<strong>{click_id}</strong>&amp;et=<strong>register</strong>&amp;txid=<strong>reg-123</strong></div>
-                    <div>FTD: .../postback.php?click_id=<strong>{click_id}</strong>&amp;et=<strong>ftd</strong>&amp;payout=<strong>50</strong>&amp;txid=<strong>ftd-456</strong></div>
-                    <div>Rebill: .../postback.php?click_id=<strong>{click_id}</strong>&amp;et=<strong>rebill</strong>&amp;payout=<strong>30</strong>&amp;txid=<strong>reb-789</strong></div>
+                    <div>Order form: .../postback.php?click_id=<strong>{click_id}</strong>&amp;et=<strong>order_form_impression</strong>&amp;txid=<strong>evt-001</strong> — Funnel, no revenue</div>
+                    <div>Payment info: .../postback.php?click_id=<strong>{click_id}</strong>&amp;et=<strong>add_payment_info</strong>&amp;txid=<strong>evt-002</strong> — Funnel, no revenue</div>
+                    <div>Purchase: .../postback.php?click_id=<strong>{click_id}</strong>&amp;et=<strong>purchase</strong>&amp;payout=<strong>34</strong>&amp;value=<strong>49</strong>&amp;txid=<strong>evt-003</strong> — Sale</div>
+                    <div>Upsell: .../postback.php?click_id=<strong>{click_id}</strong>&amp;et=<strong>upsell</strong>&amp;payout=<strong>22</strong>&amp;value=<strong>39</strong>&amp;txid=<strong>evt-004</strong> — Revenue only</div>
                 </div>
+                <p class="postback-example-text">Unknown or omitted event keys remain generic conversions for backward compatibility. Funnel and opt-in events never receive the offer payout. Purchases without payout use the offer payout; upsells without payout credit zero.</p>
             </section>
 
             <section class="postback-doc-section postback-doc-section--info">
@@ -154,7 +156,7 @@ $defaultHost = parse_url(BASE_URL, PHP_URL_HOST) ?: 'Current Domain';
                     with your network's actual macro variables.
                 </p>
                 <div class="postback-network-examples">
-                    <div>ClickBank: ...?click_id=<strong>[tid]</strong>&amp;txid=<strong>[receipt]</strong>&amp;payout=<strong>[amount]</strong></div>
+                    <div>ClickBank: ...?click_id=<strong>[tid]</strong>&amp;et=<strong>[event]</strong>&amp;txid=<strong>[receipt]</strong>&amp;payout=<strong>[affiliate_earnings]</strong>&amp;value=<strong>[amount]</strong></div>
                     <div>MaxBounty: ...?click_id=<strong>%%SUBID%%</strong>&amp;txid=<strong>%%TRANSACTION_ID%%</strong>&amp;payout=<strong>%%PAYOUT%%</strong></div>
                 </div>
             </section>

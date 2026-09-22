@@ -50,6 +50,13 @@ final class MetaCapiEventResolver
         }
 
         if ($mappingDecoded === null) {
+            if (ConversionEventClassifier::classify($eventKey) === ConversionEventClassifier::FUNNEL) {
+                return [
+                    'event_name' => self::sanitizeMetaEventName($eventKey) ?? 'FunnelEvent',
+                    'mapped' => false,
+                    'mapping_error' => "Unmapped funnel event {$eventKey}; sent as a custom event instead of {$default}",
+                ];
+            }
             return [
                 'event_name' => $default,
                 'mapped' => false,
@@ -58,6 +65,13 @@ final class MetaCapiEventResolver
         }
 
         if (!array_key_exists($eventKey, $mappingDecoded)) {
+            if (ConversionEventClassifier::classify($eventKey) === ConversionEventClassifier::FUNNEL) {
+                return [
+                    'event_name' => self::sanitizeMetaEventName($eventKey) ?? 'FunnelEvent',
+                    'mapped' => false,
+                    'mapping_error' => "Unmapped funnel event {$eventKey}; sent as a custom event instead of {$default}",
+                ];
+            }
             return [
                 'event_name' => $default,
                 'mapped' => false,

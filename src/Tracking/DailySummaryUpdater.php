@@ -752,9 +752,12 @@ class DailySummaryUpdater
         if (!$this->tableExists()) {
             return;
         }
-        $isOptIn = ConversionOptInClassifier::isOptIn($eventKey);
-        $revenue = $isOptIn ? 0.0 : ($payout !== null ? (float) $payout : ($value !== null ? (float) $value : 0.0));
-        $conversionsDelta = $isOptIn ? 0 : 1;
+        $classification = ConversionEventClassifier::classify($eventKey);
+        $isOptIn = $classification === ConversionEventClassifier::OPTIN;
+        $revenue = ConversionEventClassifier::countsAsRevenue($eventKey)
+            ? ($payout !== null ? (float) $payout : ($value !== null ? (float) $value : 0.0))
+            : 0.0;
+        $conversionsDelta = ConversionEventClassifier::countsAsConversion($eventKey) ? 1 : 0;
         $optinsDelta = $isOptIn ? 1 : 0;
         $hasOptinsCol = $this->summaryTableHasOptinsColumn();
         if ($isOptIn && !$hasOptinsCol) {
@@ -901,7 +904,7 @@ class DailySummaryUpdater
                     $ins->close();
                 }
             }
-        } else {
+        } elseif ($conversionsDelta !== 0 || $revenue !== 0.0) {
             $upd = $this->db->prepare("
                 UPDATE clicks_daily_summary
                 SET conversions = conversions + 1,
@@ -953,7 +956,8 @@ class DailySummaryUpdater
             }
         }
 
-        if ($this->tokenTableExists() && is_array($extraData)) {
+        if (($conversionsDelta !== 0 || $optinsDelta !== 0 || $revenue !== 0.0)
+            && $this->tokenTableExists() && is_array($extraData)) {
             $this->upsertTokenAggregatesForClick(
                 $campaignId,
                 $trafficSourceId,
@@ -980,9 +984,12 @@ class DailySummaryUpdater
         if (!$this->tableExists()) {
             return;
         }
-        $isOptIn = ConversionOptInClassifier::isOptIn($eventKey);
-        $revenue = $isOptIn ? 0.0 : ($payout !== null ? (float) $payout : ($value !== null ? (float) $value : 0.0));
-        $conversionsDelta = $isOptIn ? 0 : -1;
+        $classification = ConversionEventClassifier::classify($eventKey);
+        $isOptIn = $classification === ConversionEventClassifier::OPTIN;
+        $revenue = ConversionEventClassifier::countsAsRevenue($eventKey)
+            ? ($payout !== null ? (float) $payout : ($value !== null ? (float) $value : 0.0))
+            : 0.0;
+        $conversionsDelta = ConversionEventClassifier::countsAsConversion($eventKey) ? -1 : 0;
         $optinsDelta = $isOptIn ? -1 : 0;
         $hasOptinsCol = $this->summaryTableHasOptinsColumn();
         if ($isOptIn && !$hasOptinsCol) {
@@ -1012,7 +1019,7 @@ class DailySummaryUpdater
                 return;
             }
             $upd->bind_param('iiiis', $campaignId, $trafficSourceId, $offerId, $landingPageId, $summaryDate);
-        } else {
+        } elseif ($conversionsDelta !== 0 || $revenue !== 0.0) {
             $upd = $this->db->prepare("
                 UPDATE clicks_daily_summary SET
                     conversions = GREATEST(0, CAST(conversions AS SIGNED) - 1),
@@ -1034,7 +1041,8 @@ class DailySummaryUpdater
         $upd->close();
 
         $extraData = !empty($row['extra_json']) ? json_decode($row['extra_json'], true) : null;
-        if ($this->tokenTableExists() && is_array($extraData)) {
+        if (($conversionsDelta !== 0 || $optinsDelta !== 0 || $revenue !== 0.0)
+            && $this->tokenTableExists() && is_array($extraData)) {
             $this->upsertTokenAggregatesForClick(
                 $campaignId,
                 $trafficSourceId,

@@ -17,6 +17,7 @@ use SimpleKuma\Entity\Campaign;
 use SimpleKuma\Stats\CampaignStatsQueryFilters;
 use SimpleKuma\Stats\CampaignStatsResponseCache;
 use SimpleKuma\Stats\CampaignStatsV2Service;
+use SimpleKuma\Stats\EventBreakdownService;
 use SimpleKuma\Stats\ReportingBusyException;
 use SimpleKuma\Stats\ReportingConcurrencyGuard;
 use SimpleKuma\Stats\ReportingQueryCancel;
@@ -104,10 +105,12 @@ try {
     switch ($action) {
         case 'summary':
             $cacheKey = CampaignStatsResponseCache::makeKey($userId, 'summary', $cacheParts);
-            $payload = CampaignStatsResponseCache::remember($cacheKey, static function () use ($service, $campaignId, $dateFrom, $dateTo, $userTimezone, $filters) {
-                return ReportingConcurrencyGuard::run(
+            $payload = CampaignStatsResponseCache::remember($cacheKey, static function () use ($service, $db, $campaignId, $dateFrom, $dateTo, $userTimezone, $filters) {
+                $summary = ReportingConcurrencyGuard::run(
                     static fn () => $service->getSummary($campaignId, $dateFrom, $dateTo, $userTimezone, $filters)
                 );
+                $summary['event_breakdown'] = (new EventBreakdownService($db))->get($campaignId, $dateFrom, $dateTo, $userTimezone);
+                return $summary;
             }, StatsResponseCache::TTL_SUMMARY);
             echo json_encode(['ok' => true, 'data' => $payload]);
             break;

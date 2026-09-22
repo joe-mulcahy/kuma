@@ -528,8 +528,8 @@ final class DashboardStatsService
         }
         $clAlias = ClicksIndexHints::clickIdCoverAlias($this->db, 'cl', 'clicks');
         $convSql = "
-            SELECT COUNT(*) AS conversions,
-                   COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+            SELECT " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                   " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
             FROM conversions cv
             INNER JOIN clicks {$clAlias} ON cl.click_id = cv.click_id
             {$convStatusJoin}
@@ -862,8 +862,8 @@ final class DashboardStatsService
             LEFT JOIN (
                 SELECT
                     cl.campaign_id,
-                    COUNT(*) AS conversions,
-                    COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+                    " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                    " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
                 FROM conversions cv
                 INNER JOIN clicks {$clCover} ON cl.click_id = cv.click_id
                 WHERE cl.ts >= ? AND cl.ts <= ?
@@ -1042,8 +1042,8 @@ final class DashboardStatsService
 
             $convSql = "
                 SELECT HOUR(cl.ts_hour) AS hour,
-                       COUNT(*) AS conversions,
-                       COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+                       " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                       " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
                 FROM conversions cv
                 INNER JOIN clicks {$clCover} ON cl.click_id = cv.click_id
                 WHERE cl.ts >= ? AND cl.ts <= ?
@@ -1104,8 +1104,8 @@ final class DashboardStatsService
 
             $convSql = "
                 SELECT {$hourExpr} AS hour,
-                       COUNT(*) AS conversions,
-                       COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+                       " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                       " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
                 FROM conversions cv
                 INNER JOIN clicks {$clCover} ON cl.click_id = cv.click_id
                 WHERE cl.ts >= ? AND cl.ts < ?
@@ -1278,8 +1278,8 @@ final class DashboardStatsService
         $clCover = ClicksIndexHints::clickIdCoverAlias($this->db, 'cl', 'clicks');
         $convSql = "
             SELECT {$dayExpr} AS day,
-                   COUNT(*) AS conversions,
-                   COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+                   " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                   " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
             FROM conversions cv
             INNER JOIN clicks {$clCover} ON cl.click_id = cv.click_id
             WHERE cl.ts >= ? AND cl.ts <= ?

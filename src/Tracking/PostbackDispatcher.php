@@ -743,7 +743,7 @@ class PostbackDispatcher
         );
         if ($resolved['mapping_error'] !== null) {
             error_log(
-                "Facebook CAPI: {$resolved['mapping_error']} for conversion {$conversion['id']}; using default"
+                "Facebook CAPI: {$resolved['mapping_error']} for conversion {$conversion['id']}"
             );
         }
         $eventType = $resolved['event_name'];
@@ -1442,5 +1442,4 @@ class PostbackDispatcher
         );
     }
 }
-
 

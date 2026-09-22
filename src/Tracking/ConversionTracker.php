@@ -44,6 +44,18 @@ class ConversionTracker
         $resolved = ConversionEventKey::resolveFromParams($data);
         $eventKey = $resolved['event_key'];
         $data['event_key'] = $eventKey;
+        $classification = ConversionEventClassifier::classify($eventKey);
+        $data['event_classification'] = $classification;
+
+        // Apply reporting payout semantics before both storage and outbound delivery.
+        // `value` remains the transaction/order value and is not a substitute for
+        // affiliate earnings on known funnel or backend-revenue events.
+        $data['payout'] = ConversionEventClassifier::creditedPayout(
+            $eventKey,
+            isset($data['payout']) && $data['payout'] !== null ? (float) $data['payout'] : null,
+            isset($data['value']) && $data['value'] !== null ? (float) $data['value'] : null,
+            $this->offerDefaultPayout($click)
+        );
 
         // Check for duplicate
         if ($this->isDuplicate(
@@ -58,7 +70,14 @@ class ConversionTracker
 
         // Store conversion
         if ($this->storeConversion($clickId, $data)) {
-            return ['success' => true, 'message' => 'Conversion tracked', 'event_key' => $eventKey];
+            return [
+                'success' => true,
+                'message' => 'Conversion tracked',
+                'event_key' => $eventKey,
+                'event_classification' => $classification,
+                'counts_as_conversion' => ConversionEventClassifier::countsAsConversion($eventKey),
+                'counts_as_revenue' => ConversionEventClassifier::countsAsRevenue($eventKey),
+            ];
         }
 
         return ['success' => false, 'message' => 'Failed to store conversion'];
@@ -237,6 +256,25 @@ class ConversionTracker
         $stmt->close();
 
         return !empty($row['allow_multiple_conversions']);
+    }
+
+    /** @param array<string, mixed> $click */
+    private function offerDefaultPayout(array $click): float
+    {
+        $offerId = isset($click['offer_id']) ? (int) $click['offer_id'] : 0;
+        if ($offerId <= 0) {
+            return 0.0;
+        }
+        $stmt = $this->db->prepare('SELECT payout_value FROM offers WHERE id = ? LIMIT 1');
+        if (!$stmt) {
+            return 0.0;
+        }
+        $stmt->bind_param('i', $offerId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return isset($row['payout_value']) ? (float) $row['payout_value'] : 0.0;
     }
 
     private function campaignsTableHasAllowMultipleConversions(): bool

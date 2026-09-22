@@ -3088,7 +3088,7 @@ $settingsTabs = array_values(array_filter(
                                        style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-family: monospace;">
                                 <div style="font-size: 12px; color: #666; margin-top: 4px;">Enter a custom event name for Facebook CAPI</div>
                             </div>
-                            <div style="font-size: 12px; color: #666; margin-top: 4px;">Default Meta event when a postback has no <code>et</code> (or an unmapped key). These 17 (+ PageView) are Meta's full web standard set; use Custom for anything else.</div>
+                            <div style="font-size: 12px; color: #666; margin-top: 4px;">Default Meta event when a postback has no <code>et</code> (or an unmapped non-funnel key). Unmapped known funnel keys are sent as custom events instead of being mislabeled as Purchase.</div>
                         </div>
 
                         <?php
@@ -3101,6 +3101,10 @@ $settingsTabs = array_values(array_filter(
                         }
                         if ($existingMapping === []) {
                             $existingMapping = [
+                                'order_form_impression' => 'InitiateCheckout',
+                                'add_payment_info' => 'AddPaymentInfo',
+                                'purchase' => 'Purchase',
+                                'upsell' => 'Upsell',
                                 'register' => 'CompleteRegistration',
                                 'ftd' => 'Purchase',
                                 'rebill' => 'Subscribe',

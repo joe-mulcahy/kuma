@@ -1,4 +1,4 @@
-name: Sync upstream
+name: Propose upstream sync
 
 on:
   schedule:
@@ -7,16 +7,22 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
 
 jobs:
-  sync:
+  propose:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout fork
+      - name: Checkout customized main branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
 
       - name: Configure Git
         run: |
@@ -28,10 +34,45 @@ jobs:
           git remote add upstream https://github.com/kumatrk/initialrelease.git
           git fetch upstream main
 
-      - name: Merge upstream
+      - name: Prepare review branch
+        id: sync
+        shell: bash
         run: |
-          git merge upstream/main --no-edit
+          set -euo pipefail
+          git checkout -B upstream-sync origin/main
 
-      - name: Push changes
+          if git merge-base --is-ancestor upstream/main origin/main; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Customized main already contains the current upstream main."
+            exit 0
+          fi
+
+          if ! git merge upstream/main --no-edit; then
+            git merge --abort || true
+            echo "Upstream has merge conflicts with the customized fork. Manual review is required." >&2
+            exit 1
+          fi
+
+          if git diff --quiet origin/main...HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          git push --force-with-lease origin upstream-sync
+
+      - name: Open or update upstream review PR
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git push origin main
+          existing_pr="$(gh pr list --head upstream-sync --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing_pr" ]; then
+            echo "Updated existing upstream review PR #${existing_pr}."
+          else
+            gh pr create \
+              --head upstream-sync \
+              --base main \
+              --title "Review upstream Simple Kuma updates" \
+              --body-file .github/upstream-sync-pr.md
+          fi

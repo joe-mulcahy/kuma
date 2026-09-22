@@ -7,6 +7,7 @@ namespace SimpleKuma\Stats;
 use mysqli;
 use SimpleKuma\Database\ClicksTableResolver;
 use SimpleKuma\Tracking\ConversionOptInClassifier;
+use SimpleKuma\Tracking\ConversionEventClassifier;
 use SimpleKuma\Utils\Formatter;
 
 class ConversionsQueryService
@@ -30,7 +31,9 @@ class ConversionsQueryService
         string $dateFrom,
         string $dateTo,
         string $timezone,
-        string $eventTypeFilter = 'all'
+        string $eventTypeFilter = 'all',
+        ?string $eventKeyFilter = null,
+        ?string $classificationFilter = null
     ): array {
         $utcRange = Formatter::convertDateRangeToUTC($dateFrom, $dateTo, $timezone);
 
@@ -48,7 +51,22 @@ class ConversionsQueryService
         if ($eventTypeFilter === 'optins') {
             $where[] = "LOWER(COALESCE(conv.event_key, '')) IN ({$optInList})";
         } elseif ($eventTypeFilter === 'conversions') {
-            $where[] = "(conv.event_key IS NULL OR LOWER(conv.event_key) NOT IN ({$optInList}))";
+            $where[] = ConversionEventClassifier::sqlCountsAsConversion('conv.event_key');
+        }
+        if ($eventKeyFilter !== null && $eventKeyFilter !== '') {
+            $where[] = 'conv.event_key = ?';
+            $params[] = $eventKeyFilter;
+            $types .= 's';
+        }
+        $allowedClassifications = [
+            ConversionEventClassifier::FUNNEL, ConversionEventClassifier::SALE,
+            ConversionEventClassifier::REVENUE_ONLY, ConversionEventClassifier::OPTIN,
+            ConversionEventClassifier::GENERIC_CONVERSION,
+        ];
+        if ($classificationFilter !== null && in_array($classificationFilter, $allowedClassifications, true)) {
+            $where[] = '(' . ConversionEventClassifier::sqlClassificationExpression('conv.event_key') . ') = ?';
+            $params[] = $classificationFilter;
+            $types .= 's';
         }
 
         return [
@@ -117,6 +135,7 @@ class ConversionsQueryService
     {
         $payout = isset($row['payout']) && $row['payout'] !== null ? (float) $row['payout'] : null;
         $value = isset($row['value']) && $row['value'] !== null ? (float) $row['value'] : null;
+        $classification = ConversionEventClassifier::classify($row['event_key'] ?? null);
 
         return [
             'id' => (int) $row['id'],
@@ -124,12 +143,17 @@ class ConversionsQueryService
             'txid' => $row['txid'],
             'event_id' => $row['event_id'],
             'event_key' => $row['event_key'] ?? null,
+            'event_type' => $row['event_key'] ?? null,
+            'event_classification' => $classification,
+            'counts_as_conversion' => ConversionEventClassifier::countsAsConversion($row['event_key'] ?? null),
+            'counts_as_revenue' => ConversionEventClassifier::countsAsRevenue($row['event_key'] ?? null),
             'status' => $row['status'],
             'currency' => $row['currency'],
             'ts' => $row['ts'],
             'payout' => $payout,
             'value' => $value,
-            'revenue' => (float) ($payout ?? $value ?? 0),
+            'revenue' => ConversionEventClassifier::countsAsRevenue($row['event_key'] ?? null)
+                ? (float) ($payout ?? $value ?? 0) : 0.0,
             'source' => $row['source'] ?? null,
             'campaign_id' => isset($row['campaign_id']) ? (int) $row['campaign_id'] : null,
             'campaign_name' => $row['campaign_name'],
@@ -157,12 +181,14 @@ class ConversionsQueryService
         int $perPage,
         ?int $limit = null,
         ?int $offset = null,
-        string $eventTypeFilter = 'all'
+        string $eventTypeFilter = 'all',
+        ?string $eventKeyFilter = null,
+        ?string $classificationFilter = null
     ): array {
         if (!in_array($eventTypeFilter, ['all', 'optins', 'conversions'], true)) {
             $eventTypeFilter = 'all';
         }
-        $filter = $this->buildLogWhere($campaignId, $dateFrom, $dateTo, $timezone, $eventTypeFilter);
+        $filter = $this->buildLogWhere($campaignId, $dateFrom, $dateTo, $timezone, $eventTypeFilter, $eventKeyFilter, $classificationFilter);
         $clause = $this->buildLogFromClause();
 
         $perPage = min(max(1, $perPage), 500);
@@ -172,7 +198,7 @@ class ConversionsQueryService
 
         $countSql = "
             SELECT COUNT(*) AS cnt,
-                   COALESCE(SUM(COALESCE(conv.payout, conv.value, 0)), 0) AS total_revenue
+                   " . CampaignStatsExpressions::classifiedRevenueAggregate('conv') . " AS total_revenue
             FROM {$clause['from']}
             {$clause['joins']}
             WHERE {$filter['where']}
@@ -229,7 +255,9 @@ class ConversionsQueryService
         string $dateTo,
         string $timezone,
         int $page,
-        int $perPage
+        int $perPage,
+        ?string $eventKeyFilter = null,
+        ?string $classificationFilter = null
     ): array {
         $utcRange = Formatter::convertDateRangeToUTC($dateFrom, $dateTo, $timezone);
         $clicksTable = ClicksTableResolver::getStatsTable($this->db);
@@ -244,6 +272,20 @@ class ConversionsQueryService
             $where[] = 'cl.campaign_id = ?';
             $params[] = $campaignId;
             $types .= 'i';
+        }
+        if ($eventKeyFilter !== null && $eventKeyFilter !== '') {
+            $where[] = 'conv.event_key = ?';
+            $params[] = $eventKeyFilter;
+            $types .= 's';
+        }
+        if ($classificationFilter !== null && in_array($classificationFilter, [
+            ConversionEventClassifier::FUNNEL, ConversionEventClassifier::SALE,
+            ConversionEventClassifier::REVENUE_ONLY, ConversionEventClassifier::OPTIN,
+            ConversionEventClassifier::GENERIC_CONVERSION,
+        ], true)) {
+            $where[] = '(' . ConversionEventClassifier::sqlClassificationExpression('conv.event_key') . ') = ?';
+            $params[] = $classificationFilter;
+            $types .= 's';
         }
 
         $whereSql = implode(' AND ', $where);
@@ -260,7 +302,8 @@ class ConversionsQueryService
         $total = (int)($countStmt->get_result()->fetch_assoc()['cnt'] ?? 0);
 
         $sql = "
-            SELECT conv.id, conv.click_id, conv.ts, conv.payout, conv.value,
+            SELECT conv.id, conv.click_id, conv.txid, conv.event_id, conv.event_key,
+                   conv.ts, conv.payout, conv.value, conv.currency, conv.status,
                    cl.campaign_id, cp.name AS campaign_name, cl.offer_id
             FROM conversions conv
             INNER JOIN {$clicksTable} cl ON conv.click_id = cl.click_id
@@ -281,16 +324,22 @@ class ConversionsQueryService
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
+            $classification = ConversionEventClassifier::classify($row['event_key'] ?? null);
+            $countsRevenue = ConversionEventClassifier::countsAsRevenue($row['event_key'] ?? null);
             $rows[] = [
-                'id' => (int)$row['id'],
-                'click_id' => $row['click_id'],
-                'campaign_id' => (int)$row['campaign_id'],
-                'campaign_name' => $row['campaign_name'],
+                'id' => (int)$row['id'], 'click_id' => $row['click_id'],
+                'campaign_id' => (int)$row['campaign_id'], 'campaign_name' => $row['campaign_name'],
                 'offer_id' => isset($row['offer_id']) ? (int)$row['offer_id'] : null,
-                'ts' => $row['ts'],
+                'txid' => $row['txid'], 'event_id' => $row['event_id'],
+                'event_key' => $row['event_key'], 'event_type' => $row['event_key'],
+                'event_classification' => $classification,
+                'counts_as_conversion' => ConversionEventClassifier::countsAsConversion($row['event_key'] ?? null),
+                'counts_as_revenue' => $countsRevenue, 'status' => $row['status'],
+                'currency' => $row['currency'], 'ts' => $row['ts'],
+                'timestamp' => $row['ts'],
                 'payout' => isset($row['payout']) ? (float)$row['payout'] : null,
                 'value' => isset($row['value']) ? (float)$row['value'] : null,
-                'revenue' => (float)($row['payout'] ?? $row['value'] ?? 0),
+                'revenue' => $countsRevenue ? (float)($row['payout'] ?? $row['value'] ?? 0) : 0.0,
             ];
         }
 

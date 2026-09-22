@@ -152,8 +152,6 @@ class StatsController extends BaseController
 
         $perPage = $request->queryInt('per_page') ?? 50;
 
-
-
         $service = new ClicksQueryService($db);
 
         $result = $service->listClicks($campaignId, $dateFrom, $dateTo, $timezone, $page, $perPage ?? 50);
@@ -190,11 +188,14 @@ class StatsController extends BaseController
 
         $perPage = $request->queryInt('per_page') ?? 50;
 
+        $eventKey = $request->query('event_type');
+        $classification = $request->query('event_classification') ?? $request->query('classification');
+
 
 
         $service = new ConversionsQueryService($db);
 
-        $result = $service->listConversions($campaignId, $dateFrom, $dateTo, $timezone, $page, $perPage ?? 50);
+        $result = $service->listConversions($campaignId, $dateFrom, $dateTo, $timezone, $page, $perPage ?? 50, $eventKey, $classification);
 
         Response::list($result['rows'], $result['total'], $page, $perPage ?? 50);
 
@@ -349,4 +350,3 @@ class StatsController extends BaseController
     }
 
 }
-

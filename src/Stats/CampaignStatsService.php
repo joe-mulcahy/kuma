@@ -36,6 +36,7 @@ class CampaignStatsService
             $timezone,
             false
         );
+        $eventService = new EventBreakdownService($this->db);
 
         $rows = [];
         foreach ($campaigns as $campaign) {
@@ -73,6 +74,9 @@ class CampaignStatsService
                 'date_from' => $dateFrom,
                 'date_to' => $dateTo,
                 'timezone' => $timezone,
+                'event_breakdown' => $campaignId !== null
+                    ? $eventService->get($id, $dateFrom, $dateTo, $timezone)
+                    : [],
             ];
         }
 

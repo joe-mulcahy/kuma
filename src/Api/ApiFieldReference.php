@@ -96,6 +96,8 @@ class ApiFieldReference
             ['field' => 'to', 'type' => 'query date', 'required' => false, 'description' => 'End date YYYY-MM-DD.'],
             ['field' => 'timezone', 'type' => 'query string', 'required' => false, 'description' => 'IANA timezone for date boundaries.'],
             ['field' => 'campaign_id', 'type' => 'query integer', 'required' => false, 'description' => 'Filter to one campaign. Omit for all campaigns.'],
+            ['field' => 'event_type', 'type' => 'query string', 'required' => false, 'description' => 'Exact inbound event key, for example purchase or upsell.'],
+            ['field' => 'event_classification', 'type' => 'query string', 'required' => false, 'description' => 'funnel, sale, revenue_only, optin, or generic_conversion.'],
             ['field' => 'page', 'type' => 'query integer', 'required' => false, 'description' => 'Page number (default 1).'],
             ['field' => 'per_page', 'type' => 'query integer', 'required' => false, 'description' => 'Rows per page (default 50).'],
         ];
@@ -252,10 +254,16 @@ class ApiFieldReference
             ['field' => 'campaign_id', 'type' => 'integer', 'required' => true, 'description' => 'Campaign id.'],
             ['field' => 'campaign_name', 'type' => 'string', 'required' => true, 'description' => 'Campaign name.'],
             ['field' => 'offer_id', 'type' => 'integer | null', 'required' => false, 'description' => 'Offer on the click.'],
+            ['field' => 'txid', 'type' => 'string | null', 'required' => false, 'description' => 'Network transaction id.'],
+            ['field' => 'event_id', 'type' => 'string | null', 'required' => false, 'description' => 'Network event id used for deduplication.'],
+            ['field' => 'event_type', 'type' => 'string | null', 'required' => false, 'description' => 'Canonical inbound event key.'],
+            ['field' => 'event_classification', 'type' => 'string', 'required' => true, 'description' => 'Reporting classification derived from event_type.'],
+            ['field' => 'counts_as_conversion', 'type' => 'boolean', 'required' => true, 'description' => 'Whether this row contributes to primary Conversions/CVR.'],
+            ['field' => 'counts_as_revenue', 'type' => 'boolean', 'required' => true, 'description' => 'Whether this row may contribute reporting revenue.'],
             ['field' => 'ts', 'type' => 'string', 'required' => true, 'description' => 'Conversion timestamp (UTC MySQL datetime).'],
             ['field' => 'payout', 'type' => 'number | null', 'required' => false, 'description' => 'Network-reported payout if set.'],
             ['field' => 'value', 'type' => 'number | null', 'required' => false, 'description' => 'Alternate value field if used.'],
-            ['field' => 'revenue', 'type' => 'number', 'required' => true, 'description' => 'payout ?? value ?? 0 — use this for reporting.'],
+            ['field' => 'revenue', 'type' => 'number', 'required' => true, 'description' => 'Classification-aware credited revenue for this event.'],
         ];
     }
 

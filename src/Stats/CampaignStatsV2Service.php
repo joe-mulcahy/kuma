@@ -1639,8 +1639,8 @@ class CampaignStatsV2Service
         $clCover = ClicksIndexHints::clickIdCoverAlias($this->db, 'cl', 'clicks');
         $includedSql = $hasExclusionFlag ? ' AND cl.exclude_from_stats = 0' : '';
         $convSql = "
-            SELECT COUNT(*) AS conversions,
-                   COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+            SELECT " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                   " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
             FROM conversions cv
             INNER JOIN clicks {$clCover} ON cl.click_id = cv.click_id
             WHERE cl.campaign_id = ? AND cl.ts >= ? AND cl.ts <= ?{$includedSql}{$filterSql}
@@ -1804,8 +1804,8 @@ class CampaignStatsV2Service
             $clCover = ClicksIndexHints::clickIdCoverAlias($this->db, 'cl', 'clicks');
             $convSql = "
                 SELECT {$groupExpr} AS group_key,
-                       COUNT(*) AS conversions,
-                       COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+                       " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                       " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
                 FROM conversions cv
                 STRAIGHT_JOIN clicks {$clCover} ON cl.click_id = cv.click_id
                 {$joinOffer}
@@ -1922,8 +1922,8 @@ class CampaignStatsV2Service
 
         return "LEFT JOIN (
             SELECT cv.click_id,
-                   COUNT(*) AS conversion_count,
-                   SUM(COALESCE(cv.payout, cv.value)) AS revenue_sum
+                   " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversion_count,
+                   " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue_sum
             FROM conversions cv
             INNER JOIN clicks {$clCover} ON clx.click_id = cv.click_id
             WHERE clx.campaign_id = {$cid}
@@ -2271,8 +2271,8 @@ class CampaignStatsV2Service
         }
         $convSql = "
             SELECT {$convHourExpr} AS hour,
-                   COUNT(*) AS conversions,
-                   COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+                   " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                   " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
             FROM conversions cv
             INNER JOIN clicks {$clCover} ON cl.click_id = cv.click_id
             WHERE cl.campaign_id = ? AND cl.ts >= ? AND cl.ts <= ?
@@ -2609,8 +2609,8 @@ class CampaignStatsV2Service
         $clCover = ClicksIndexHints::clickIdCoverAlias($this->db, 'cl', 'clicks');
         $convSql = "
             SELECT {$dayExpr} AS day,
-                   COUNT(*) AS conversions,
-                   COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+                   " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                   " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
             FROM conversions cv
             INNER JOIN clicks {$clCover} ON cl.click_id = cv.click_id
             WHERE cl.campaign_id = ? AND cl.ts >= ? AND cl.ts <= ?

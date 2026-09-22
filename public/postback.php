@@ -68,8 +68,10 @@ header('Content-Type: application/json');
 if ($result['success']) {
     http_response_code(200);
     $payload = ['status' => 'ok', 'message' => $result['message']];
-    if (array_key_exists('event_key', $result)) {
-        $payload['event_key'] = $result['event_key'];
+    foreach (['event_key', 'event_classification', 'counts_as_conversion', 'counts_as_revenue'] as $field) {
+        if (array_key_exists($field, $result)) {
+            $payload[$field] = $result[$field];
+        }
     }
     echo json_encode($payload);
 } else {

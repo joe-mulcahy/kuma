@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace SimpleKuma\Stats;
 
-use SimpleKuma\Tracking\ConversionOptInClassifier;
+use SimpleKuma\Tracking\ConversionEventClassifier;
 
 /**
  * Shared SQL fragments for API stats (aligned with campaign-stats.php semantics).
@@ -307,29 +307,29 @@ class CampaignStatsExpressions
      */
     public static function conversionsAggJoin(string $clAlias = 'cl'): string
     {
-        $optInList = ConversionOptInClassifier::sqlInList();
+        $countsConversion = ConversionEventClassifier::sqlCountsAsConversion('event_key');
+        $countsRevenue = ConversionEventClassifier::sqlCountsAsRevenue('event_key');
+        $classification = ConversionEventClassifier::sqlClassificationExpression('event_key');
 
         return "LEFT JOIN (
             SELECT click_id,
-                   SUM(CASE WHEN event_key IS NULL OR event_key NOT IN ({$optInList}) THEN 1 ELSE 0 END) AS conversion_count,
-                   SUM(CASE WHEN event_key IN ({$optInList}) THEN 1 ELSE 0 END) AS optin_count,
-                   SUM(CASE WHEN event_key IS NULL OR event_key NOT IN ({$optInList}) THEN COALESCE(payout, value) ELSE 0 END) AS revenue_sum
+                   SUM(CASE WHEN {$countsConversion} THEN 1 ELSE 0 END) AS conversion_count,
+                   SUM(CASE WHEN ({$classification}) = 'optin' THEN 1 ELSE 0 END) AS optin_count,
+                   SUM(CASE WHEN {$countsRevenue} THEN COALESCE(payout, value, 0) ELSE 0 END) AS revenue_sum
             FROM conversions
             GROUP BY click_id
         ) conv ON conv.click_id = {$clAlias}.click_id";
     }
 
-    /**
-     * 1:1 conversions join that keeps every conversions row (including opt-ins)
-     * in conversion_count / revenue_sum. Used by the daily-summary cron so we
-     * fix SUM(cl.cost) fan-out without changing how that rebuild counts events.
-     */
+    /** Classified 1:1 join used by daily-summary rebuilds. */
     public static function conversionsCountJoinAllEvents(string $clAlias = 'cl'): string
     {
+        $countsConversion = ConversionEventClassifier::sqlCountsAsConversion('event_key');
+        $countsRevenue = ConversionEventClassifier::sqlCountsAsRevenue('event_key');
         return "LEFT JOIN (
             SELECT click_id,
-                   COUNT(*) AS conversion_count,
-                   COALESCE(SUM(COALESCE(payout, value)), 0) AS revenue_sum
+                   SUM(CASE WHEN {$countsConversion} THEN 1 ELSE 0 END) AS conversion_count,
+                   COALESCE(SUM(CASE WHEN {$countsRevenue} THEN COALESCE(payout, value, 0) ELSE 0 END), 0) AS revenue_sum
             FROM conversions
             GROUP BY click_id
         ) conv ON conv.click_id = {$clAlias}.click_id";
@@ -363,6 +363,19 @@ class CampaignStatsExpressions
     public static function revenueSumExpr(string $convAlias = 'conv'): string
     {
         return "COALESCE(SUM({$convAlias}.revenue_sum), 0)";
+    }
+
+    /** Aggregate expressions for direct conversions-table reporting paths. */
+    public static function classifiedConversionCountAggregate(string $alias = 'cv'): string
+    {
+        $predicate = ConversionEventClassifier::sqlCountsAsConversion("{$alias}.event_key");
+        return "SUM(CASE WHEN {$predicate} THEN 1 ELSE 0 END)";
+    }
+
+    public static function classifiedRevenueAggregate(string $alias = 'cv'): string
+    {
+        $predicate = ConversionEventClassifier::sqlCountsAsRevenue("{$alias}.event_key");
+        return "COALESCE(SUM(CASE WHEN {$predicate} THEN COALESCE({$alias}.payout, {$alias}.value, 0) ELSE 0 END), 0)";
     }
 
     /**

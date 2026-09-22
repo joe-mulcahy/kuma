@@ -361,8 +361,8 @@ final class CampaignListStatsService
         $convSql = "
             SELECT
                 cl.campaign_id,
-                COUNT(*) AS conversions,
-                COALESCE(SUM(COALESCE(cv.payout, cv.value)), 0) AS revenue
+                " . CampaignStatsExpressions::classifiedConversionCountAggregate('cv') . " AS conversions,
+                " . CampaignStatsExpressions::classifiedRevenueAggregate('cv') . " AS revenue
             FROM conversions cv
             INNER JOIN {$clicksTable} {$clCover} ON cl.click_id = cv.click_id
             WHERE cl.ts >= ? AND cl.ts <= ?

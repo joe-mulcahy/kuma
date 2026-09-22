@@ -6,6 +6,7 @@ require_once __DIR__ . '/../src/Stats/ConversionsQueryService.php';
 
 use SimpleKuma\Stats\ConversionsQueryService;
 use SimpleKuma\Tracking\ConversionOptInClassifier;
+use SimpleKuma\Tracking\ConversionEventClassifier;
 use SimpleKuma\Utils\Formatter;
 
 function renderClickLookupLink(string $clickId): string
@@ -38,17 +39,12 @@ function renderConversionStatusBadge(string $status): string
 
 function renderConversionEventCell(?string $eventKey): string
 {
-    if (ConversionOptInClassifier::isOptIn($eventKey)) {
-        $key = htmlspecialchars((string) $eventKey);
-        return '<span class="badge badge-optin" title="Counted as Opt-in (not a purchase conversion)">Opt-in</span>'
-            . ' <span class="conversion-mono conversion-event-key">' . $key . '</span>';
-    }
-
-    if ($eventKey === null || $eventKey === '') {
-        return '<span class="conversion-mono">-</span>';
-    }
-
-    return '<span class="conversion-mono">' . htmlspecialchars($eventKey) . '</span>';
+    $classification = ConversionEventClassifier::classify($eventKey);
+    $label = ConversionEventClassifier::label($classification);
+    $key = ($eventKey === null || $eventKey === '') ? 'conversion' : $eventKey;
+    return '<span class="badge' . ($classification === ConversionEventClassifier::OPTIN ? ' badge-optin' : '') . '">'
+        . htmlspecialchars($label) . '</span> <span class="conversion-mono conversion-event-key">'
+        . htmlspecialchars($key) . '</span>';
 }
 
 $db = $GLOBALS['db'] ?? new mysqli(DB_HOST, DB_USER, DB_PASSWORD, DB_NAME);
@@ -68,6 +64,8 @@ $eventTypeFilter = isset($_GET['event_type']) ? (string) $_GET['event_type'] : '
 if (!in_array($eventTypeFilter, ['all', 'optins', 'conversions'], true)) {
     $eventTypeFilter = 'all';
 }
+$eventKeyFilter = isset($_GET['event_key']) ? trim((string) $_GET['event_key']) : null;
+$classificationFilter = isset($_GET['classification']) ? trim((string) $_GET['classification']) : null;
 
 $todayInUserTz = Formatter::getTodayInTimezone($userTimezone);
 if (!isset($_GET['date_from']) && !isset($_GET['date_to'])) {
@@ -88,7 +86,9 @@ $result = $service->listConversionsForLog(
     $perPage,
     null,
     null,
-    $eventTypeFilter
+    $eventTypeFilter,
+    $eventKeyFilter,
+    $classificationFilter
 );
 
 $conversions = $result['rows'];
@@ -268,6 +268,21 @@ $exportUrl = '?' . http_build_query($exportParams);
             </div>
 
             <div>
+                <label style="display: block; font-weight: 600; margin-bottom: 8px; font-size: 14px;">Event key</label>
+                <input name="event_key" value="<?= htmlspecialchars((string) $eventKeyFilter) ?>" placeholder="e.g. purchase" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 4px;">
+            </div>
+
+            <div>
+                <label style="display: block; font-weight: 600; margin-bottom: 8px; font-size: 14px;">Classification</label>
+                <select name="classification" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 4px;">
+                    <option value="">All classifications</option>
+                    <?php foreach (['funnel' => 'Funnel', 'sale' => 'Sale', 'revenue_only' => 'Revenue Only', 'optin' => 'Opt-in', 'generic_conversion' => 'Generic Conversion'] as $key => $label): ?>
+                        <option value="<?= $key ?>" <?= $classificationFilter === $key ? 'selected' : '' ?>><?= $label ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div>
                 <label style="display: block; font-weight: 600; margin-bottom: 8px; font-size: 14px;">Per Page</label>
                 <select name="per_page_limit" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 4px;">
                     <option value="50" <?= $perPage === 50 ? 'selected' : '' ?>>50</option>
@@ -344,7 +359,7 @@ function setConversionDate(preset) {
 
 <div class="conversion-log-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 24px;">
     <div class="card" style="padding: 16px;">
-        <div style="font-size: 12px; color: #666;">Total Conversions</div>
+        <div style="font-size: 12px; color: #666;">Total Events</div>
         <div style="font-size: 28px; font-weight: 700; color: #3d5a26;"><?= number_format($totalRows) ?></div>
     </div>
     <div class="card" style="padding: 16px;">
@@ -369,7 +384,7 @@ function setConversionDate(preset) {
 
 <div class="card conversion-log-card">
     <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-        <h2 class="card-title">Conversions (<?= number_format($totalRows) ?>)</h2>
+        <h2 class="card-title">Events (<?= number_format($totalRows) ?>)</h2>
         <a href="<?= htmlspecialchars($exportUrl) ?>" class="btn btn-secondary">Export CSV</a>
     </div>
     <div class="card-body">
@@ -395,7 +410,7 @@ function setConversionDate(preset) {
                             <th>Revenue</th>
                             <th>Currency</th>
                             <th>TXID</th>
-                            <th>Event</th>
+                            <th>Event / Classification</th>
                             <th>Event ID</th>
                             <th>Traffic Source</th>
                             <th>Country</th>

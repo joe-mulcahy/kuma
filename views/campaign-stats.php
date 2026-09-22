@@ -133,6 +133,16 @@ $statsJsVer = file_exists($statsJsPath) ? (string)filemtime($statsJsPath) : '1';
         <div class="stats-v2-kpi-card skeleton"></div>
     </div>
 
+    <div class="card" id="stats-v2-event-breakdown-card" style="margin-bottom: 20px; display: none;">
+        <div class="card-header"><h3 style="margin: 0;">Event Breakdown</h3></div>
+        <div class="card-body table-wrapper">
+            <table class="table">
+                <thead><tr><th>Event</th><th>Classification</th><th>Count</th><th>Unique Clicks</th><th>Unique Click Rate</th><th>Revenue</th></tr></thead>
+                <tbody id="stats-v2-event-breakdown"></tbody>
+            </table>
+        </div>
+    </div>
+
     <div class="stats-v2-tabs">
         <button type="button" class="stats-v2-tab active" data-tab="overview">Overview</button>
         <button type="button" class="stats-v2-tab" data-tab="breakdown">Breakdown</button>

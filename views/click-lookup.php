@@ -3,8 +3,10 @@
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../src/Utils/Formatter.php';
 require_once __DIR__ . '/../src/Tracking/ConversionOptInClassifier.php';
+require_once __DIR__ . '/../src/Tracking/ConversionEventClassifier.php';
 require_once __DIR__ . '/../src/Tracking/OptInEmailExtractor.php';
 use SimpleKuma\Tracking\ConversionOptInClassifier;
+use SimpleKuma\Tracking\ConversionEventClassifier;
 use SimpleKuma\Tracking\OptInEmailExtractor;
 use SimpleKuma\Utils\Formatter;
 
@@ -95,7 +97,7 @@ if (!empty($clickId)) {
             
             if ($clickData) {
                 // Get all conversions for this click
-                $convSql = "SELECT * FROM conversions WHERE click_id = ? ORDER BY ts DESC";
+                $convSql = "SELECT * FROM conversions WHERE click_id = ? ORDER BY ts ASC, id ASC";
                 $convStmt = $db->prepare($convSql);
                 if ($convStmt) {
                     $convStmt->bind_param('s', $clickId);
@@ -514,11 +516,19 @@ if (!empty($clickId)) {
             <?php
             $optInEvents = [];
             $purchaseEvents = [];
+            $totalClickRevenue = 0.0;
+            $primarySalesConversions = 0;
             foreach ($conversions as $conv) {
                 if (ConversionOptInClassifier::isOptIn($conv['event_key'] ?? null)) {
                     $optInEvents[] = $conv;
                 } else {
                     $purchaseEvents[] = $conv;
+                }
+                if (ConversionEventClassifier::countsAsRevenue($conv['event_key'] ?? null)) {
+                    $totalClickRevenue += (float)($conv['payout'] ?? $conv['value'] ?? 0);
+                }
+                if (ConversionEventClassifier::countsAsConversion($conv['event_key'] ?? null)) {
+                    $primarySalesConversions++;
                 }
             }
             $clickExtra = is_array($clickData['extra_json_parsed'] ?? null) ? $clickData['extra_json_parsed'] : [];
@@ -578,13 +588,17 @@ if (!empty($clickId)) {
             <?php if (!empty($purchaseEvents)): ?>
             <div class="card" style="margin-bottom: 24px;">
                 <div class="card-header" style="background: #f5f5f5; padding: 16px; border-bottom: 2px solid #ddd;">
-                    <h2 style="margin: 0; font-size: 20px; color: #333;">Conversions (<?= count($purchaseEvents) ?>)</h2>
+                    <h2 style="margin: 0; font-size: 20px; color: #333;">Event Timeline (<?= count($purchaseEvents) ?>)</h2>
                 </div>
                 <div class="card-body" style="padding: 20px;">
                     <?php foreach ($purchaseEvents as $index => $conv): ?>
                         <div class="card" style="margin-bottom: <?= $index < count($purchaseEvents) - 1 ? '16px' : '0' ?>; border: 1px solid #ddd;">
                             <div class="card-body" style="padding: 16px;">
                                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                                    <div>
+                                        <strong style="color: #666; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Event / Classification</strong>
+                                        <div style="font-size: 14px; margin-top: 4px;"><?= htmlspecialchars((string)($conv['event_key'] ?? 'conversion')) ?> · <?= htmlspecialchars(ConversionEventClassifier::label(ConversionEventClassifier::classify($conv['event_key'] ?? null))) ?></div>
+                                    </div>
                                     <div>
                                         <strong style="color: #666; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Conversion ID</strong>
                                         <div style="font-size: 14px; margin-top: 4px;">
@@ -649,6 +663,7 @@ if (!empty($clickId)) {
                     <?php endforeach; ?>
                 </div>
             </div>
+            <div class="card" style="margin-bottom: 24px;"><div class="card-body" style="padding: 16px;"><strong>Total Revenue for Click:</strong> <?= Formatter::formatCurrency($totalClickRevenue, $userCurrency) ?> &nbsp; <strong>Primary Sales Conversions:</strong> <?= $primarySalesConversions ?></div></div>
             <?php else: ?>
             <div class="card" style="margin-bottom: 24px;">
                 <div class="card-body" style="padding: 20px; text-align: center; color: #999;">
@@ -786,4 +801,3 @@ if (!empty($clickId)) {
     }
 }
 </style>
-
