@@ -11,3 +11,5 @@ Before merging:
 - Verify that unmapped funnel events cannot become false Meta Purchase events.
 
 The workflow intentionally has no path that pushes upstream commits directly to `main`.
+
+Because the repositories have unrelated Git histories, this PR contains the file delta since the commit recorded in `.github/upstream-base`; merging the PR also advances that baseline.

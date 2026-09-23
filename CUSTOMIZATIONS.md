@@ -6,6 +6,8 @@ This repository is a maintained private fork of Simple Kuma. Upstream remains a 
 
 `.github/workflows/sync-upstream.yml` periodically fetches `kumatrk/initialrelease` and opens or updates a pull request from `upstream-sync` into `main`. It must never merge or push upstream commits directly into `main`.
 
+The repositories have unrelated Git histories because Kuma releases were imported as zip-parity snapshots. `.github/upstream-base` records the last upstream product snapshot incorporated into this fork. The workflow applies the file delta between that baseline and the latest upstream commit, then advances the baseline inside the review PR. Do not replace this with `git merge --allow-unrelated-histories`.
+
 ## Event classification
 
 Inbound events retain their canonical `conversions.event_key`. Reporting behavior is derived centrally by `SimpleKuma\Tracking\ConversionEventClassifier` rather than stored in a redundant database column.
