@@ -1,4 +1,54 @@
-# Simple Kuma Tracker Version 1.1.5.21
+# Simple Kuma Tracker Version 1.1.5.22
+
+## Changes in 1.1.5.22
+
+### Honeycomb: installable traffic & conversion addons
+- New **System → Honeycomb** page: browse the fixed catalog (`kumatrk/honeycomb-addons`), search/filter by type, import verified zips, enable/disable without uninstalling, and remove addons
+- Addons live outside the Kuma zip under `honeycomb/addons/` on each server — core updates and addon updates stay independent
+- Safe install path: HTTPS GitHub host allowlist, required SHA-256, zip path/symlink/size limits, extension allowlist, blocked server config files
+- Campaign edit / create wizard: Honeycomb bindings driven by addon `provides` — conversion export and remote cost IDs can appear together
+- Hourly spend for Honeycomb networks lands in `honeycomb_campaign_hourly_costs` and overlays campaign KPI / chart totals via `HoneycombCostAggregator` (**summary-first** — no per-click cost joins)
+- Recommended one cron for Facebook cost, Google Ads cost, and Honeycomb: `scripts/kuma-traffic-api-cron.php` (Honeycomb-only fallback: `scripts/honeycomb-cron.php`)
+- Migrations: `090_honeycomb_kernel`, `092_honeycomb_runtime`, `093_honeycomb_conversion_exports`
+- **Taboola Cost API** and **Whop Ads** ship from the Honeycomb catalog (not inside this zip) — import from Honeycomb after upgrade
+
+### Whop Ads (via Honeycomb catalog)
+- Template traffic source with Whop click tokens (`wacid` / `wasid` / `waid` / Meta UTMs)
+- Single landing page when the campaign uses a Whop traffic source (Whop Pixel + Kuma CTA handoff)
+- Conversion export to Whop Events API (default `lead`); click capture of `_wuid` + original landing URL
+- Campaign-level spend sync from Whop Ad Reports (`ad_campaign:stats:read`) when a Whop ad campaign ID is bound
+- Cost badge: Honeycomb `integrated_api` sources show Live API cost (not “variables only”)
+
+### Taboola Cost API (via Honeycomb catalog)
+- Backstage client-credentials spend sync into the same Honeycomb hourly cost table and stats overlay
+
+### Server Status: VPS CPU / RAM / disk monitor
+- New **System → Server Status** page: live disk meters, best-effort CPU load pressure + RAM (Linux `/proc`), MySQL click-table sizes, and Run archive & retention now
+- In-app warning banner when CPU / RAM / disk cross thresholds (configurable on the page; no email)
+- Retention cron records host metrics alongside disk; raw purge still preserves report summaries
+- Theme-aware UI (readable in dark mode)
+
+### Tracker: ISP, connection type, and browser language
+- New click columns: `isp`, `connection_type`, `language` (migration `091_add_clicks_isp_connection_language.sql`)
+- Campaign Stats tracker breakdowns: **ISP**, **Connection Type**, **Browser Language**
+- **ISP** from redistributable **DB-IP ASN Lite** (`geoip/DBIP-ASN-Lite.mmdb`, CC BY 4.0) — packaged in the customer zip
+- Do **not** ship MaxMind GeoLite2-ASN in the zip (license); private drop-in still works if present
+- **Connection type**: traffic-source tokens first, else ASN org heuristic → Cellular / Broadband / Corporate / Unknown
+- **Browser language**: primary Accept-Language tag on origin; edge ingest keeps worker `language`
+- Refresh ASN DB: `php scripts/download-geoip-databases.php --dbip-asn` (also in `--all`)
+- Historical clicks stay N/A until new traffic; Settings → GeoIP shows ASN/ISP status
+
+### Offer / LP rotation weights (edge UX)
+- Origin links apply new weights **immediately** after save
+- Edge (Cloudflare KV) can take **up to about a minute** after sync to use new weights worldwide
+- Campaign UI copy on Edge box + offer/LP rotation explains this
+
+### Packaging
+- Customer zip includes Honeycomb kernel + empty secured `honeycomb/` runtime (addons are catalog-installed, not bundled)
+- Required migrations include Honeycomb **090 / 092 / 093** and ISP **091**
+- Production crons allowlisted: `kuma-traffic-api-cron.php`, `honeycomb-cron.php`
+- **Installer:** migration **091** (ISP / connection / language) is idempotent in PHP — re-running after a partial apply no longer fails with `Duplicate column name 'isp'`
+- Custom postbacks skip empty network click ids (e.g. PropellerAds `visitor_id`) and do not retry HTTP 4xx
 
 ## Changes in 1.1.5.21
 

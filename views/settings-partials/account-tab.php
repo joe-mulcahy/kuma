@@ -79,6 +79,9 @@ $accountEmail = trim($_POST['email'] ?? ($currentUser['email'] ?? ''));
                             <option value="Asia/Tokyo" <?= $accountNormalizedTimezone === 'Asia/Tokyo' ? 'selected' : '' ?>>Tokyo (JST)</option>
                             <option value="Australia/Sydney" <?= $accountNormalizedTimezone === 'Australia/Sydney' ? 'selected' : '' ?>>Sydney (AEDT)</option>
                         </optgroup>
+                        <optgroup label="Latin America">
+                            <option value="America/Bogota" <?= $accountNormalizedTimezone === 'America/Bogota' ? 'selected' : '' ?>>Bogotá (COT, UTC-5)</option>
+                        </optgroup>
                         <optgroup label="Other">
                             <option value="UTC" <?= $accountNormalizedTimezone === 'UTC' ? 'selected' : '' ?>>UTC (Universal)</option>
                         </optgroup>

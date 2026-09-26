@@ -180,11 +180,16 @@ $gaCost = $editingGoogleAdsCostIntegration ?? [];
 
                         <div style="margin-top: 24px; padding: 16px; background: #fff3cd; border: 2px solid #ffc107; border-radius: 6px;">
                             <h3 style="margin: 0 0 12px 0; font-size: 16px; color: #856404;">Cron job (hourly)</h3>
+                            <p style="margin: 0 0 8px; font-size: 12px; color: #856404;"><strong>Recommended</strong> (Facebook + Google + Honeycomb):</p>
+                            <code style="display: block; padding: 8px; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; word-break: break-all;">
+                                0 * * * * php <?= htmlspecialchars(str_replace('\\', '/', ROOT_PATH)) ?>/scripts/kuma-traffic-api-cron.php >> <?= htmlspecialchars(str_replace('\\', '/', ROOT_PATH)) ?>/storage/logs/kuma-traffic-api-cron.log 2>&amp;1
+                            </code>
+                            <p style="margin: 12px 0 8px; font-size: 12px; color: #856404;">Google-only (still valid):</p>
                             <code style="display: block; padding: 8px; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; word-break: break-all;">
                                 0 * * * * php <?= htmlspecialchars(str_replace('\\', '/', ROOT_PATH)) ?>/scripts/google_ads_cost_updater.php >> <?= htmlspecialchars(str_replace('\\', '/', ROOT_PATH)) ?>/storage/logs/google_ads_cost_updater.log 2>&amp;1
                             </code>
                             <p style="margin: 12px 0 0; font-size: 12px; color: #856404;">
-                                Run separately from the Facebook cost updater. Requires <code>googleads/google-ads-php</code> (included when you run <code>composer install</code>).
+                                If both lines run in the same hour, Google is fetched once. Requires <code>googleads/google-ads-php</code> (included when you run <code>composer install</code>). If the host disables <code>exec()</code>, keep this Google-only line.
                             </p>
                         </div>
                     </div>

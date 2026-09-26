@@ -67,27 +67,56 @@ class TrafficSource
      */
     public function create(array $data): int
     {
-        $stmt = $this->db->prepare(
-            "INSERT INTO traffic_sources 
-            (name, tokens_json, postback_template, cost_tracking_method, cost_param_key, cost_currency, created_at) 
-            VALUES (?, ?, ?, ?, ?, ?, NOW())"
-        );
-
-        $tokensJson = json_encode($data['tokens'] ?? []);
+        $tokensJson = json_encode($data['tokens'] ?? $data['tokens_json'] ?? []);
+        if (is_array($data['tokens_json'] ?? null)) {
+            $tokensJson = json_encode($data['tokens_json']);
+        } elseif (is_string($data['tokens_json'] ?? null) && ($data['tokens_json'] ?? '') !== '') {
+            $tokensJson = $data['tokens_json'];
+        }
         $costTrackingMethod = $data['cost_tracking_method'] ?? 'manual_token';
+        $providerKey = array_key_exists('provider_key', $data)
+            ? (trim((string) $data['provider_key']) !== '' ? trim((string) $data['provider_key']) : null)
+            : null;
+        $postback = $data['postback_template'] ?? null;
+        $costParam = $data['cost_param_key'] ?? null;
+        $costCurrency = $data['cost_currency'] ?? null;
+        $name = (string) ($data['name'] ?? '');
 
-        $stmt->bind_param(
-            'ssssss',
-            $data['name'],
-            $tokensJson,
-            $data['postback_template'],
-            $costTrackingMethod,
-            $data['cost_param_key'],
-            $data['cost_currency']
-        );
+        if ($this->hasProviderKeyColumn()) {
+            $stmt = $this->db->prepare(
+                'INSERT INTO traffic_sources
+                (name, provider_key, tokens_json, postback_template, cost_tracking_method, cost_param_key, cost_currency, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NOW())'
+            );
+            $stmt->bind_param(
+                'sssssss',
+                $name,
+                $providerKey,
+                $tokensJson,
+                $postback,
+                $costTrackingMethod,
+                $costParam,
+                $costCurrency
+            );
+        } else {
+            $stmt = $this->db->prepare(
+                'INSERT INTO traffic_sources
+                (name, tokens_json, postback_template, cost_tracking_method, cost_param_key, cost_currency, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, NOW())'
+            );
+            $stmt->bind_param(
+                'ssssss',
+                $name,
+                $tokensJson,
+                $postback,
+                $costTrackingMethod,
+                $costParam,
+                $costCurrency
+            );
+        }
 
         $stmt->execute();
-        return $stmt->insert_id;
+        return (int) $stmt->insert_id;
     }
 
     /**
@@ -95,32 +124,74 @@ class TrafficSource
      */
     public function update(int $id, array $data): bool
     {
-        $stmt = $this->db->prepare(
-            "UPDATE traffic_sources 
-            SET name = ?, tokens_json = ?, postback_template = ?, 
-                cost_tracking_method = ?, cost_param_key = ?, cost_currency = ?, updated_at = NOW()
-            WHERE id = ?"
-        );
-
-        $tokensJson = json_encode($data['tokens'] ?? []);
+        $tokensJson = json_encode($data['tokens'] ?? $data['tokens_json'] ?? []);
+        if (is_array($data['tokens_json'] ?? null)) {
+            $tokensJson = json_encode($data['tokens_json']);
+        } elseif (is_string($data['tokens_json'] ?? null) && ($data['tokens_json'] ?? '') !== '') {
+            $tokensJson = $data['tokens_json'];
+        }
         $costTrackingMethod = $data['cost_tracking_method'] ?? 'manual_token';
+        $postback = $data['postback_template'] ?? null;
+        $costParam = $data['cost_param_key'] ?? null;
+        $costCurrency = $data['cost_currency'] ?? null;
+        $name = (string) ($data['name'] ?? '');
 
-        $stmt->bind_param(
-            'ssssssi',
-            $data['name'],
-            $tokensJson,
-            $data['postback_template'],
-            $costTrackingMethod,
-            $data['cost_param_key'],
-            $data['cost_currency'],
-            $id
-        );
+        if ($this->hasProviderKeyColumn() && array_key_exists('provider_key', $data)) {
+            $providerKey = trim((string) $data['provider_key']) !== ''
+                ? trim((string) $data['provider_key'])
+                : null;
+            $stmt = $this->db->prepare(
+                'UPDATE traffic_sources
+                SET name = ?, provider_key = ?, tokens_json = ?, postback_template = ?,
+                    cost_tracking_method = ?, cost_param_key = ?, cost_currency = ?, updated_at = NOW()
+                WHERE id = ?'
+            );
+            $stmt->bind_param(
+                'sssssssi',
+                $name,
+                $providerKey,
+                $tokensJson,
+                $postback,
+                $costTrackingMethod,
+                $costParam,
+                $costCurrency,
+                $id
+            );
+        } else {
+            $stmt = $this->db->prepare(
+                'UPDATE traffic_sources
+                SET name = ?, tokens_json = ?, postback_template = ?,
+                    cost_tracking_method = ?, cost_param_key = ?, cost_currency = ?, updated_at = NOW()
+                WHERE id = ?'
+            );
+            $stmt->bind_param(
+                'ssssssi',
+                $name,
+                $tokensJson,
+                $postback,
+                $costTrackingMethod,
+                $costParam,
+                $costCurrency,
+                $id
+            );
+        }
 
         $ok = $stmt->execute();
         if ($ok) {
             EdgeCampaignSync::hookTrafficSourceChanged($this->db, $id);
         }
         return $ok;
+    }
+
+    private function hasProviderKeyColumn(): bool
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+        $result = $this->db->query("SHOW COLUMNS FROM traffic_sources LIKE 'provider_key'");
+        $cached = $result !== false && $result->num_rows > 0;
+        return $cached;
     }
 
     /**

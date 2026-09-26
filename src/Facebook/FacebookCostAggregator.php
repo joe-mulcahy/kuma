@@ -759,7 +759,7 @@ class FacebookCostAggregator
                     )
                     " : "
                     -- CRITICAL: Include ALL costs without clicks in date range, even if adset has no clicks at any time
-                    -- This ensures gutters and other spend without clicks is included in overall total
+                    -- This ensures spend-only adsets (no click traffic) are included in overall total
                     ") . "
                 GROUP BY as_cost.adset_id
             ) as unmatched_adsets
@@ -1827,7 +1827,7 @@ class FacebookCostAggregator
                     " : "") . "
                     " : "
                     -- CRITICAL FIX: Remove EXISTS check requiring clicks in date range
-                    -- This allows costs without clicks to be included (e.g., gutters campaign)
+                    -- This allows costs without clicks to be included (spend-only adsets)
                     -- Costs are stored from Meta API even if no clicks exist, and should be shown
                     -- The LEFT JOIN with c.id IS NULL check above already ensures we don't double-count costs that have matching clicks
                     ") . "

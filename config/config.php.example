@@ -35,6 +35,9 @@ define('SESSION_LIFETIME', 7200);
 define('SESSION_COOKIE_HTTPONLY', true);
 define('SESSION_COOKIE_SECURE', true);
 
+// Public documentation (hosted on simplekuma.com, not inside the install zip)
+define('USER_GUIDE_URL', 'https://simplekuma.com/user-guide/');
+
 define('HASH_ALGO', defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT);
 // threads must be 1 on PHP builds that use libsodium for Argon2 (common on shared hosts)
 define('HASH_OPTIONS', [

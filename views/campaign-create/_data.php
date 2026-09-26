@@ -153,3 +153,28 @@ foreach ($trafficSources as $ts) {
 }
 
 $tokenCount = max(3, count($_POST['custom_token_name'] ?? []));
+
+// Honeycomb / Whop Ads (wizard parity with campaign editor)
+$honeycombAddonsByProvider = [];
+$honeycombBindingsBySlug = [];
+$whopBizAccountId = '';
+try {
+    $honeyFields = new \SimpleKuma\Honeycomb\HoneycombCampaignFields($db);
+    $honeycombAddonsByProvider = $honeyFields->enabledByProviderKey();
+    if (isset($honeycombAddonsByProvider['whop'])) {
+        $whopCredStore = new \SimpleKuma\Honeycomb\CredentialStore($db);
+        foreach ($whopCredStore->listByAddon('whop-ads') as $whopMeta) {
+            if (($whopMeta['status'] ?? '') !== 'active') {
+                continue;
+            }
+            $whopFull = $whopCredStore->getById((int) ($whopMeta['id'] ?? 0), true);
+            $whopPayload = is_array($whopFull['payload'] ?? null) ? $whopFull['payload'] : [];
+            $whopBizAccountId = trim((string) ($whopPayload['account_id'] ?? ''));
+            if ($whopBizAccountId !== '') {
+                break;
+            }
+        }
+    }
+} catch (\Throwable $e) {
+    error_log('campaign-create honeycomb load: ' . $e->getMessage());
+}

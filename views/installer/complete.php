@@ -254,7 +254,7 @@
                     <div class="step-number"><?= ($installerDeleted ?? false) ? '2' : '3' ?></div>
                     <div class="step-content">
                         <strong>Set Up a Tracking Domain</strong>
-                        <p>In <strong>Settings → Tracking Domains</strong>, add a dedicated host (e.g. <code>track.yourdomain.com</code>) and assign it to campaigns. Paid ad links should use that host — <strong>not</strong> your admin dashboard domain.</p>
+                        <p>In <strong>Settings → Domains</strong>, add a dedicated host (e.g. <code>track.yourdomain.com</code>) and assign it to campaigns. Paid ad links should use that host — <strong>not</strong> your admin dashboard domain.</p>
                     </div>
                 </div>
 
@@ -271,6 +271,14 @@
                     <div class="step-content">
                         <strong>Create Your First Campaign</strong>
                         <p>Set up offers, landing pages, and create your first tracking campaign.</p>
+                    </div>
+                </div>
+
+                <div class="step-item">
+                    <div class="step-number"><?= ($installerDeleted ?? false) ? '5' : '6' ?></div>
+                    <div class="step-content">
+                        <strong>Read the User Guide</strong>
+                        <p>Step-by-step help for every page and setting: <a href="https://simplekuma.com/user-guide/" target="_blank" rel="noopener noreferrer">simplekuma.com/user-guide</a></p>
                     </div>
                 </div>
             </div>

@@ -40,6 +40,8 @@ final class CampaignStatsDimensionRegistry
         'browser' => ['key' => 'browser', 'label' => 'Browser', 'group' => 'tracker'],
         'browser_version' => ['key' => 'browser_version', 'label' => 'Browser Version', 'group' => 'tracker'],
         'isp' => ['key' => 'isp', 'label' => 'ISP', 'group' => 'tracker'],
+        'connection_type' => ['key' => 'connection_type', 'label' => 'Connection Type', 'group' => 'tracker'],
+        'language' => ['key' => 'language', 'label' => 'Browser Language', 'group' => 'tracker'],
         'ip' => ['key' => 'ip', 'label' => 'IP Address', 'group' => 'tracker'],
     ];
 
@@ -149,9 +151,10 @@ final class CampaignStatsDimensionRegistry
             if (isset($seen[$key])) {
                 continue;
             }
-            // No click-column fallback (e.g. isp): if a namespaced TS token already
-            // covers this param, skip the tracker entry so we don't show two dims
-            // that resolve to the same JSON path.
+            // If a TS token was namespaced (ts:isp) because it collides with a
+            // tracker column, still show the tracker dim — they are different sources.
+            // Only skip a tracker entry when there is NO click column and ts:key
+            // already covers the same JSON token path.
             $hasColumn = isset(CampaignStatsExpressions::BUILTIN_COLUMN_MAP[$key]);
             $tsKey = CampaignStatsExpressions::TS_TOKEN_PREFIX . $key;
             if (!$hasColumn && isset($seen[$tsKey])) {

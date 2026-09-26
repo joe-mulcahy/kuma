@@ -62,6 +62,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_campaign'])) {
             $newId = $campaign->create($data);
             if ($newId > 0) {
                 $customPostback->setForCampaign($newId, $parsed['custom_postback_ids']);
+                try {
+                    (new \SimpleKuma\Honeycomb\HoneycombCampaignFields($db))->saveFromPost($newId, $_POST);
+                } catch (\Throwable $e) {
+                    error_log('campaign-create honeycomb save: ' . $e->getMessage());
+                }
 
                 $campaignSlug = new \SimpleKuma\Entity\CampaignSlug($db);
                 foreach ($parsed['slugs']['slug'] as $idx => $slug) {
@@ -93,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_campaign'])) {
         $initialStep = 1;
         if (!empty($errors['traffic_source_id']) || !empty($errors['google_ads_integration_id'])) {
             $initialStep = 2;
-        } elseif (!empty($errors['rotation']) || !empty($errors['flow_type'])) {
+        } elseif (!empty($errors['rotation']) || !empty($errors['flow_type']) || !empty($errors['landing_pages'])) {
             $initialStep = 3;
         } elseif (!empty($errors['slugs']) || !empty($errors['redirect_rules'])) {
             $initialStep = 4;

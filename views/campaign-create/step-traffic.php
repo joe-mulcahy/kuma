@@ -7,16 +7,18 @@ use SimpleKuma\Release\TrafficSourceReleaseHelper;
 <div style="margin-bottom: 20px;">
     <label style="display: block; font-weight: 600; margin-bottom: 8px;">Traffic Source <span style="color:#d32f2f;">*</span></label>
     <select name="traffic_source_id" id="traffic_source_id"
-            onchange="toggleTrafficSourceSelector(); toggleFacebookIntegration(); toggleGoogleAdsIntegration();"
+            onchange="toggleTrafficSourceSelector(); toggleFacebookIntegration(); toggleGoogleAdsIntegration(); toggleHoneycombBindings(); syncWhopWizardUi();"
             style="width:100%;padding:10px;border:2px solid #ddd;border-radius:4px;">
         <?php foreach ($trafficSources as $ts):
             $isSelectable = TrafficSourceReleaseHelper::isSelectableForRelease($ts);
             $isFacebook = stripos($ts['name'], 'facebook') !== false;
             $isGoogle = TrafficSourceReleaseHelper::usesGoogleAdsIntegration($ts);
+            $providerKey = trim((string) ($ts['provider_key'] ?? ''));
         ?>
             <option value="<?= $ts['id'] ?>"
                     data-is-facebook="<?= $isFacebook ? '1' : '0' ?>"
                     data-is-google="<?= $isGoogle ? '1' : '0' ?>"
+                    data-provider-key="<?= htmlspecialchars($providerKey, ENT_QUOTES, 'UTF-8') ?>"
                     <?= !$isSelectable ? ' disabled' : '' ?>
                     <?= cc_selected($defaultTrafficSourceId, $ts['id']) ?>>
                 <?= htmlspecialchars($ts['name']) ?><?= !$isSelectable ? ' (Coming soon)' : '' ?>
@@ -24,10 +26,14 @@ use SimpleKuma\Release\TrafficSourceReleaseHelper;
         <?php endforeach; ?>
     </select>
     <p style="font-size: 12px; color: #666; margin-top: 6px; line-height: 1.45;">
-        Facebook, Google Ads, YouTube, or any custom source (including ones you add yourself).
+        Facebook, Google Ads, YouTube, Whop Ads, or any custom source (including ones you add yourself).
         Cost can stay manual/URL until a live cost API exists for that network.
         Google/YouTube conversions export via scheduled CSV import (Settings → Integrations).
     </p>
+    <div id="wizard-whop-traffic-note" style="display:none;margin-top:12px;padding:12px 14px;background:#f3eef8;border:1px solid #c5b3d6;border-radius:6px;font-size:13px;color:#4a3563;line-height:1.45;">
+        <strong>Whop Ads:</strong> Use <strong>Landing Page → Offer</strong> flow with <strong>one</strong> owned LP.
+        Paste that LP URL into Whop (not a <code>/km/</code> link). Pixel + CTA codes are on the Flow step and again after create.
+    </div>
 </div>
 
 <div style="margin-bottom: 20px; padding: 14px; background: #f9faf7; border: 1px solid #e0e6d8; border-radius: 6px;">
@@ -122,6 +128,77 @@ use SimpleKuma\Release\TrafficSourceReleaseHelper;
         <a href="?page=settings&tab=integrations" target="_blank" style="color: #3d5a26;">Manage conversion integrations</a>
     </p>
 </div>
+
+<?php if ($honeycombAddonsByProvider !== []): ?>
+<div id="honeycomb_binding_fields" style="margin-bottom: 20px; display: none;">
+    <?php foreach ($honeycombAddonsByProvider as $providerKey => $addonMeta):
+        $slug = (string) $addonMeta['slug'];
+        $binding = $honeycombBindingsBySlug[$slug] ?? null;
+        $bindingExtra = is_array($binding['extra'] ?? null) ? $binding['extra'] : [];
+        $provides = is_array($addonMeta['provides'] ?? null) ? $addonMeta['provides'] : [];
+        $hasConversionExport = in_array('conversion_export', $provides, true);
+        $hasCostSync = in_array('cost_sync', $provides, true);
+        $exportOn = !empty($bindingExtra['conversion_export']);
+        if ($hasConversionExport && !isset($_POST['honeycomb_binding'][$slug]['conversion_export']) && empty($binding)) {
+            $exportOn = true;
+        }
+        $eventName = (string) ($bindingExtra['event_name'] ?? 'lead');
+        if (!empty($_POST['honeycomb_binding'][$slug]['event_name'])) {
+            $eventName = (string) $_POST['honeycomb_binding'][$slug]['event_name'];
+        }
+        if (isset($_POST['honeycomb_binding'][$slug]['conversion_export'])) {
+            $exportOn = !empty($_POST['honeycomb_binding'][$slug]['conversion_export']);
+        }
+        $remoteAccount = (string) ($_POST['honeycomb_binding'][$slug]['remote_account_id'] ?? $binding['remote_account_id'] ?? '');
+        $remoteCampaign = (string) ($_POST['honeycomb_binding'][$slug]['remote_campaign_id'] ?? $binding['remote_campaign_id'] ?? '');
+    ?>
+        <div class="honeycomb-binding-panel" data-provider-key="<?= htmlspecialchars($providerKey) ?>" style="display:none;margin-bottom:16px;padding:14px;background:#f5f8f2;border:1px solid #c5d4b8;border-radius:6px;">
+            <strong style="color:#3d5a26;"><?= htmlspecialchars((string) $addonMeta['name']) ?> (Honeycomb)</strong>
+            <?php if ($hasConversionExport): ?>
+            <p style="font-size:12px;color:#666;margin:8px 0 12px;line-height:1.45;">
+                Send conversions to this network’s Events API when this campaign converts.
+                Credentials are under <a href="?page=honeycomb" style="color:#3d5a26;">Honeycomb</a>.
+            </p>
+            <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer;">
+                <input type="hidden" name="honeycomb_binding[<?= htmlspecialchars($slug) ?>][conversion_export]" value="0">
+                <input type="checkbox"
+                       name="honeycomb_binding[<?= htmlspecialchars($slug) ?>][conversion_export]"
+                       value="1"
+                       <?= $exportOn ? 'checked' : '' ?>
+                       style="width:18px;height:18px;">
+                <span style="font-weight:600;color:#333;">Send conversions to <?= htmlspecialchars((string) $addonMeta['name']) ?></span>
+            </label>
+            <label style="display:block;font-weight:600;margin-bottom:6px;">Event name</label>
+            <select name="honeycomb_binding[<?= htmlspecialchars($slug) ?>][event_name]"
+                    style="width:100%;padding:10px;border:2px solid #ddd;border-radius:4px;margin-bottom:12px;">
+                <?php foreach (['lead', 'schedule', 'contact', 'complete_registration', 'submit_application'] as $ev): ?>
+                    <option value="<?= $ev ?>" <?= $eventName === $ev ? 'selected' : '' ?>><?= $ev ?></option>
+                <?php endforeach; ?>
+            </select>
+            <?php endif; ?>
+            <?php if ($hasCostSync): ?>
+            <p style="font-size:12px;color:#666;margin:<?= $hasConversionExport ? '12px' : '8px' ?> 0 12px;line-height:1.45;">
+                Link this Kuma campaign to the remote account + campaign IDs so Honeycomb can sync ad spend hourly.
+                Credentials are managed under <a href="?page=honeycomb" style="color:#3d5a26;">Honeycomb</a>.
+            </p>
+            <label style="display:block;font-weight:600;margin-bottom:6px;">Remote account ID</label>
+            <input type="text" name="honeycomb_binding[<?= htmlspecialchars($slug) ?>][remote_account_id]"
+                   value="<?= htmlspecialchars($remoteAccount) ?>"
+                   placeholder="e.g. biz_… or advertiser id"
+                   style="width:100%;padding:10px;border:2px solid #ddd;border-radius:4px;margin-bottom:12px;">
+            <label style="display:block;font-weight:600;margin-bottom:6px;">Remote campaign ID</label>
+            <input type="text" name="honeycomb_binding[<?= htmlspecialchars($slug) ?>][remote_campaign_id]"
+                   value="<?= htmlspecialchars($remoteCampaign) ?>"
+                   placeholder="Ad campaign id from the network"
+                   style="width:100%;padding:10px;border:2px solid #ddd;border-radius:4px;">
+            <?php elseif ($hasConversionExport): ?>
+            <input type="hidden" name="honeycomb_binding[<?= htmlspecialchars($slug) ?>][remote_account_id]" value="">
+            <input type="hidden" name="honeycomb_binding[<?= htmlspecialchars($slug) ?>][remote_campaign_id]" value="">
+            <?php endif; ?>
+        </div>
+    <?php endforeach; ?>
+</div>
+<?php endif; ?>
 
 <div id="traffic_source_postbacks_section" style="display: none;"></div>
 

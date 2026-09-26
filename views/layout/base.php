@@ -283,6 +283,20 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
                         if ($shouldShow): 
                         ?>
                         <li class="sidebar-nav-item">
+                            <a href="<?= APP_BASE_URL ?>/index.php?page=honeycomb"
+                               class="sidebar-nav-link <?= ($currentPage ?? '') === 'honeycomb' ? 'active' : '' ?>">
+                                <img src="<?= ASSETS_BASE_URL ?>/assets/images/honeycombsmall.png" alt="Honeycomb" class="sidebar-nav-icon">
+                                <span>Honeycomb</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
+                            <a href="<?= APP_BASE_URL ?>/index.php?page=server-status"
+                               class="sidebar-nav-link <?= ($currentPage ?? '') === 'server-status' ? 'active' : '' ?>">
+                                <img src="<?= ASSETS_BASE_URL ?>/assets/images/autodetectbear.png" alt="Server Status" class="sidebar-nav-icon">
+                                <span>Server Status</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
                             <a href="<?= APP_BASE_URL ?>/index.php?page=settings" 
                                class="sidebar-nav-link <?= ($currentPage ?? '') === 'settings' ? 'active' : '' ?>">
                                 <img src="<?= ASSETS_BASE_URL ?>/assets/images/settings.png" alt="Settings" class="sidebar-nav-icon">
@@ -299,6 +313,8 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
                 <div class="sidebar-footer-full">
                     Simple Kuma V <?= htmlspecialchars($skAppVersion) ?><br>
                     <span style="font-size: 10px;">Work is Never Over</span><br>
+                    <a href="<?= htmlspecialchars(defined('USER_GUIDE_URL') ? USER_GUIDE_URL : 'https://simplekuma.com/user-guide/') ?>" class="sidebar-footer-about" target="_blank" rel="noopener noreferrer">User Guide</a>
+                    <span class="sidebar-footer-sep" aria-hidden="true"> · </span>
                     <a href="<?= APP_BASE_URL ?>/index.php?page=settings&tab=about" class="sidebar-footer-about">About Kuma</a>
                 </div>
                 <div class="sidebar-footer-collapsed" title="Simple Kuma V <?= htmlspecialchars($skAppVersion) ?>">
@@ -492,6 +508,83 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
             })();
             </script>
             <?php endif; ?>
+
+            <?php
+            // In-app host resource warnings (CPU / RAM / disk) — no email
+            $showHostResourceBanner = !empty($currentPage)
+                && $currentPage !== 'tracking'
+                && (!$permission || $permission->hasPermission(Permission::PERM_SETTINGS_VIEW));
+            if ($showHostResourceBanner) {
+                try {
+                    $hostDb = $GLOBALS['db'] ?? null;
+                    $closeHostDb = false;
+                    if (!$hostDb instanceof mysqli || $hostDb->connect_error) {
+                        $hostDb = new mysqli(DB_HOST, DB_USER, DB_PASSWORD, DB_NAME);
+                        $closeHostDb = true;
+                    }
+                    if (!$hostDb->connect_error) {
+                        $hostSettings = new \SimpleKuma\Settings\SettingsManager($hostDb);
+                        \SimpleKuma\DataRetention\HostResourceHealth::maybeEvaluateAndRecord(
+                            $hostSettings,
+                            dirname(__DIR__, 2)
+                        );
+                        $hostWarnings = \SimpleKuma\DataRetention\HostResourceHealth::activeWarnings($hostSettings);
+                        if ($hostWarnings !== []) {
+                            $warnStamp = (string) $hostSettings->get('host_resources_warn_last_at', '');
+                            $dismissKey = 'host_resource_warn_dismissed_' . md5($warnStamp . '|' . implode(',', array_column($hostWarnings, 'kind')));
+                            $primary = $hostWarnings[0];
+                            $extraCount = count($hostWarnings) - 1;
+                            $summary = $primary['label'];
+                            if ($extraCount > 0) {
+                                $summary .= ' (+' . $extraCount . ' more)';
+                            }
+                            ?>
+                        <div id="host-resource-warning-banner" style="background: linear-gradient(135deg, #c97800 0%, #a85f00 100%); color: #ffffff; padding: 14px 24px; margin: 0; border-bottom: 2px solid rgba(255,255,255,0.2); box-shadow: 0 2px 8px rgba(0,0,0,0.08); position: relative; z-index: 99;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; max-width: 1400px; margin: 0 auto; flex-wrap: wrap; gap: 12px;">
+                                <div style="flex: 1; min-width: 200px;">
+                                    <strong style="font-size: 16px; display: block; margin-bottom: 2px;"><?= htmlspecialchars($summary) ?></strong>
+                                    <span style="font-size: 13px; opacity: 0.95;"><?= htmlspecialchars($primary['detail']) ?></span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <a href="<?= APP_BASE_URL ?>/index.php?page=server-status"
+                                       style="padding: 8px 16px; background: rgba(255,255,255,0.2); color: #ffffff; border: 1px solid rgba(255,255,255,0.35); border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap;">
+                                        Server Status
+                                    </a>
+                                    <button type="button" id="host-resource-warning-dismiss"
+                                            style="padding: 8px 12px; background: transparent; color: #ffffff; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; cursor: pointer; font-size: 20px; line-height: 1;"
+                                            title="Dismiss">×</button>
+                                </div>
+                            </div>
+                        </div>
+                        <script>
+                        (function () {
+                            var key = <?= json_encode($dismissKey, JSON_THROW_ON_ERROR) ?>;
+                            var banner = document.getElementById('host-resource-warning-banner');
+                            if (!banner) return;
+                            if (localStorage.getItem(key) === 'true') {
+                                banner.style.display = 'none';
+                                return;
+                            }
+                            var btn = document.getElementById('host-resource-warning-dismiss');
+                            if (btn) {
+                                btn.addEventListener('click', function () {
+                                    banner.style.display = 'none';
+                                    localStorage.setItem(key, 'true');
+                                });
+                            }
+                        })();
+                        </script>
+                            <?php
+                        }
+                    }
+                    if ($closeHostDb && $hostDb instanceof mysqli) {
+                        $hostDb->close();
+                    }
+                } catch (\Throwable $e) {
+                    error_log('Host resource banner error: ' . $e->getMessage());
+                }
+            }
+            ?>
             
             <!-- Content Container -->
             <div class="content-container">

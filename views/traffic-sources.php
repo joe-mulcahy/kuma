@@ -111,6 +111,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'cost_tracking_method' => $_POST['cost_tracking_method'] ?? 'manual_token',
             'cost_param_key' => $_POST['cost_param_key'] ?? '',
             'cost_currency' => $_POST['cost_currency'] ?? '',
+            'provider_key' => trim((string) ($_POST['provider_key'] ?? '')) !== ''
+                ? trim((string) $_POST['provider_key'])
+                : null,
             'tokens' => $tokens,
         ];
 
@@ -138,8 +141,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Load traffic source for editing
 $editSource = null;
+$honeycombTsNotice = '';
 if ($action === 'edit' && $id) {
     $editSource = $trafficSource->getById($id);
+    if ($editSource) {
+        $honeycombTsNotice = (new \SimpleKuma\Honeycomb\HoneycombCampaignFields($db))
+            ->renderTrafficSourceNotice($editSource);
+    }
 }
 
 $db->close();
@@ -176,6 +184,11 @@ $db->close();
             $db = new mysqli(DB_HOST, DB_USER, DB_PASSWORD, DB_NAME);
             $trafficSource = new \SimpleKuma\Entity\TrafficSource($db);
             $sources = $trafficSource->getAll();
+            $honeyFields = new \SimpleKuma\Honeycomb\HoneycombCampaignFields($db);
+            $honeycombListBadges = [];
+            foreach ($sources as $source) {
+                $honeycombListBadges[(int) $source['id']] = $honeyFields->renderTrafficSourceBadge($source);
+            }
             $db->close();
             ?>
 
@@ -206,7 +219,7 @@ $db->close();
                         <tbody>
                             <?php foreach ($sources as $source): ?>
                                 <tr>
-                                <td><strong><?= htmlspecialchars($source['name']) ?></strong></td>
+                                <td><strong><?= htmlspecialchars($source['name']) ?></strong><?= $honeycombListBadges[(int) $source['id']] ?? '' ?></td>
                                 <td><?= count($source['tokens_json']) ?> params</td>
                                     <td>
                                         <?= TrafficSourceCostStatus::renderBadge($source, ' title="' . htmlspecialchars(TrafficSourceCostStatus::getHelpNote($source) ?? '', ENT_QUOTES) . '"') ?>
@@ -252,7 +265,7 @@ $db->close();
                             <!-- Header: Name -->
                             <div style="margin-bottom: var(--spacing-sm); border-bottom: 1px solid rgba(0,0,0,0.1); padding-bottom: var(--spacing-xs);">
                                 <div style="font-weight: 600; font-size: 16px; color: #3d5a26;">
-                                    <?= htmlspecialchars($source['name']) ?>
+                                    <?= htmlspecialchars($source['name']) ?><?= $honeycombListBadges[(int) $source['id']] ?? '' ?>
                                 </div>
                                 <div style="font-size: 11px; color: #666; margin-top: 4px;">
                                     Created: <?= date('M d, Y', strtotime($source['created_at'])) ?>
@@ -364,8 +377,11 @@ $db->close();
             <?php endif; ?>
             <form method="post" action="?page=traffic-sources&action=<?= $action ?><?= $id ? "&id={$id}" : '' ?>">
                 <?= Csrf::field() ?>
+                <input type="hidden" name="provider_key" id="provider_key"
+                       value="<?= htmlspecialchars((string) ($editSource['provider_key'] ?? $_POST['provider_key'] ?? '')) ?>">
                 <div id="traffic_source_cost_notice" style="display: none;"></div>
                 <?php if ($action === 'edit' && $editSource): ?>
+                    <?= $honeycombTsNotice ?>
                     <?= TrafficSourceCostStatus::renderNotice($editSource) ?>
                 <?php endif; ?>
                 <!-- Basic Info -->
@@ -794,6 +810,10 @@ $db->close();
             
             // Set basic fields
             document.querySelector('input[name="name"]').value = template.name;
+            const providerKeyInput = document.getElementById('provider_key');
+            if (providerKeyInput) {
+                providerKeyInput.value = template.provider_key || templateName || '';
+            }
             if (document.querySelector('select[name="cost_tracking_method"]')) {
                 document.querySelector('select[name="cost_tracking_method"]').value = template.cost_tracking_method || 'manual_token';
             }

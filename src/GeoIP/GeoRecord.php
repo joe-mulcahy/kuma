@@ -21,7 +21,9 @@ class GeoRecord
         public ?float $latitude = null,      // null if not available
         public ?float $longitude = null,     // null if not available
         public ?float $accuracyKm = null,    // null if not available
-        public string $source = 'none'       // Provider name or "none"
+        public string $source = 'none',      // Provider name or "none"
+        public string $isp = 'N/A',          // ASN organization or "N/A"
+        public string $connectionType = 'N/A' // Cellular/Broadband/Corporate/Unknown or "N/A"
     ) {
     }
 
@@ -42,7 +44,9 @@ class GeoRecord
             latitude: null,
             longitude: null,
             accuracyKm: null,
-            source: 'none'
+            source: 'none',
+            isp: 'N/A',
+            connectionType: 'N/A'
         );
     }
 
@@ -63,6 +67,8 @@ class GeoRecord
             'longitude' => $this->longitude,
             'accuracy_km' => $this->accuracyKm,
             'source' => $this->source,
+            'isp' => $this->isp,
+            'connection_type' => $this->connectionType,
         ];
     }
 }

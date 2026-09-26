@@ -374,10 +374,8 @@ foreach ($tsData as &$ts) {
 }
 
 // Calculate summary
-// CRITICAL FIX: Sum the traffic source costs we already calculated correctly
-// getTrafficSourceCost uses cumulative MAX and includes all costs (including gutters) correctly
+// Sum traffic-source costs already calculated (cumulative MAX; includes spend-only adsets)
 // This matches what's shown in the traffic source breakdown table
-// The individual traffic source calculations are working correctly (Facebook shows $52.12)
 $totalRevenue = array_sum(array_column($tsData, 'revenue'));
 $totalCost = array_sum(array_column($tsData, 'total_cost'));
 $totalProfit = $totalRevenue - $totalCost;

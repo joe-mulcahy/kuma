@@ -40,8 +40,9 @@ final class ClickRecorder
      *   ip?: string|null,
      *   ua?: string|null,
      *   referrer?: string|null,
-     *   geo?: array{country?: ?string, region?: ?string, city?: ?string, postal?: ?string},
+     *   geo?: array{country?: ?string, region?: ?string, city?: ?string, postal?: ?string, isp?: ?string, connection_type?: ?string, language?: ?string},
      *   device?: array<string, ?string>,
+     *   language?: string|null,
      *   source?: string
      * } $input
      * @return array{ok: bool, duplicate?: bool, message?: string}
@@ -77,6 +78,9 @@ final class ClickRecorder
             'region' => $input['geo']['region'] ?? null,
             'city' => $input['geo']['city'] ?? null,
             'postal' => $input['geo']['postal'] ?? null,
+            'isp' => $input['geo']['isp'] ?? null,
+            'connection_type' => $input['geo']['connection_type'] ?? null,
+            'language' => $input['geo']['language'] ?? null,
         ];
         $deviceData = [
             'device' => $input['device']['device'] ?? null,
@@ -93,7 +97,7 @@ final class ClickRecorder
             try {
                 $geoLocator = new \SimpleKuma\Enrichment\GeoLocator($ip);
                 $looked = $geoLocator->getGeoData();
-                foreach (['country', 'region', 'city', 'postal'] as $k) {
+                foreach (['country', 'region', 'city', 'postal', 'isp', 'connection_type'] as $k) {
                     if (empty($geoData[$k]) && !empty($looked[$k])) {
                         $geoData[$k] = $looked[$k];
                     }
@@ -102,6 +106,11 @@ final class ClickRecorder
                 error_log('ClickRecorder geo: ' . $e->getMessage());
             }
         }
+
+        $languageRaw = isset($input['language']) && is_string($input['language'])
+            ? $input['language']
+            : (isset($geoData['language']) && is_string($geoData['language']) ? $geoData['language'] : null);
+        $geoData = ClickNetworkEnrichment::enrich($geoData, $ip, $params, $languageRaw);
 
         $clickSource = (string) ($input['source'] ?? 'origin');
         if ($ua) {
@@ -134,6 +143,8 @@ final class ClickRecorder
                 $extraData['cookies'][$cookieKey] = $params[$cookieKey];
             }
         }
+
+        $extraData = ClickAttributionCapture::enrich($extraData, $params);
 
         $customTokens = $campaign['custom_tokens_json'] ?? [];
         if (is_string($customTokens)) {
@@ -203,6 +214,18 @@ final class ClickRecorder
             $geoParamTypes .= 's';
             $geoBind[] = $geoData['postal'] ?? null;
         }
+        $geoAppend = ClickNetworkEnrichment::appendOptionalColumns(
+            fn (string $table, string $column): bool => $this->columnExists($table, $column),
+            $geoCols,
+            $geoPlaceholders,
+            $geoParamTypes,
+            $geoBind,
+            $geoData
+        );
+        $geoCols = $geoAppend['cols'];
+        $geoPlaceholders = $geoAppend['placeholders'];
+        $geoParamTypes = $geoAppend['types'];
+        $geoBind = $geoAppend['bind'];
 
         if ($trafficSourceColumnExists) {
             $sql = "INSERT INTO clicks

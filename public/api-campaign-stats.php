@@ -53,7 +53,9 @@ if ($permission && !$permission->hasPermission(Permission::PERM_STATS_VIEW)) {
 
 $currentUser = $auth->getCurrentUser();
 $userId = (int)($currentUser['id'] ?? 0);
-$userTimezone = ($currentUser && isset($currentUser['timezone'])) ? (string)$currentUser['timezone'] : 'UTC';
+$userTimezone = Formatter::normalizeTimezone(
+    ($currentUser && isset($currentUser['timezone'])) ? (string)$currentUser['timezone'] : 'UTC'
+);
 // Long stats queries must not hold the session lock (blocks Campaigns / other tabs).
 $auth->releaseSessionLock();
 

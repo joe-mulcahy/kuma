@@ -398,7 +398,7 @@ class RedirectlessTracker
         $referrer = $_SERVER['HTTP_REFERER'] ?? null;
 
         // Enrich with geo and device data (postal used for Meta CAPI zp when available)
-        $geoData = ['country' => null, 'region' => null, 'city' => null, 'postal' => null];
+        $geoData = ['country' => null, 'region' => null, 'city' => null, 'postal' => null, 'isp' => null, 'connection_type' => null, 'language' => null];
         $deviceData = [
             'device' => null, 
             'device_brand' => null, 
@@ -413,11 +413,18 @@ class RedirectlessTracker
         if ($ip && $ip !== '::1' && $ip !== '127.0.0.1' && $ip !== '::') {
             try {
                 $geoLocator = new \SimpleKuma\Enrichment\GeoLocator($ip);
-                $geoData = $geoLocator->getGeoData();
+                $geoData = array_merge($geoData, $geoLocator->getGeoData());
             } catch (\Exception $e) {
                 $this->debugLog("RedirectlessTracker: GeoLocator error for IP {$ip}: " . $e->getMessage());
             }
         }
+
+        $geoData = ClickNetworkEnrichment::enrich(
+            $geoData,
+            $ip,
+            $params,
+            $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? null
+        );
 
         if ($ua) {
             $deviceDetector = new \SimpleKuma\Enrichment\DeviceDetector($ua);
@@ -452,6 +459,8 @@ class RedirectlessTracker
             $extraData['cookies']['_fbp'] = $_COOKIE['_fbp'];
             $extraData['all_params']['_fbp'] = $_COOKIE['_fbp']; // Also store in all_params for easy access
         }
+
+        $extraData = ClickAttributionCapture::enrich($extraData, $params);
 
         // Extract custom token values based on campaign's custom_tokens_json
         $customTokens = $campaign['custom_tokens_json'] ?? [];
@@ -537,6 +546,21 @@ class RedirectlessTracker
             $geoParamTypes .= "s";
             $geoBind[] = $geoData['postal'] ?? null;
         }
+        $geoAppend = ClickNetworkEnrichment::appendOptionalColumns(
+            function (string $table, string $column): bool {
+                $check = $this->db->query("SHOW COLUMNS FROM `{$table}` LIKE '" . $this->db->real_escape_string($column) . "'");
+                return $check && $check->num_rows > 0;
+            },
+            $geoCols,
+            $geoPlaceholders,
+            $geoParamTypes,
+            $geoBind,
+            $geoData
+        );
+        $geoCols = $geoAppend['cols'];
+        $geoPlaceholders = $geoAppend['placeholders'];
+        $geoParamTypes = $geoAppend['types'];
+        $geoBind = $geoAppend['bind'];
 
         // Build INSERT statement based on column existence (must match Redirector - include offer_id)
         // Redirectless: offer_id is NULL (visitor on LP, no offer yet)

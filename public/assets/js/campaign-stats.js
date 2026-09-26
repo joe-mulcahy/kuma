@@ -131,6 +131,26 @@
         }
     };
 
+    // Unit rates (CPC/EPC/CPV) often sit below one cent on push traffic.
+    // Keep ledger totals at 2 decimals; expand precision only when |n| < $0.01.
+    const fmtRate = (n) => {
+        const num = Number(n);
+        if (!Number.isFinite(num)) {
+            return '—';
+        }
+        const digits = Math.abs(num) > 0 && Math.abs(num) < 0.01 ? 4 : 2;
+        try {
+            return new Intl.NumberFormat(undefined, {
+                style: 'currency',
+                currency,
+                minimumFractionDigits: digits,
+                maximumFractionDigits: digits,
+            }).format(num);
+        } catch (e) {
+            return '$' + num.toFixed(digits);
+        }
+    };
+
     const fmtPct = (n) => Number(n).toFixed(2) + '%';
 
     const KPI_SVGS = {
@@ -1044,42 +1064,42 @@
             {
                 label: 'CPC',
                 sub: 'Cost per click',
-                value: clicks > 0 ? fmtMoney(cost / clicks) : '—',
+                value: clicks > 0 ? fmtRate(cost / clicks) : '—',
                 icon: 'cpc',
                 tone: 'stats-v2-kpi-icon--cost',
             },
             {
                 label: 'EPC',
                 sub: 'Earnings per click',
-                value: clicks > 0 ? fmtMoney(revenue / clicks) : '—',
+                value: clicks > 0 ? fmtRate(revenue / clicks) : '—',
                 icon: 'epc',
                 tone: 'stats-v2-kpi-icon--revenue',
             },
             {
                 label: 'CPA',
                 sub: 'Cost per conversion',
-                value: conversions > 0 ? fmtMoney(cost / conversions) : '—',
+                value: conversions > 0 ? fmtRate(cost / conversions) : '—',
                 icon: 'cpa',
                 tone: 'stats-v2-kpi-icon--conversions',
             },
             {
                 label: 'RPV',
                 sub: 'Revenue per visitor',
-                value: visitors > 0 ? fmtMoney(revenue / visitors) : '—',
+                value: visitors > 0 ? fmtRate(revenue / visitors) : '—',
                 icon: 'rpv',
                 tone: 'stats-v2-kpi-icon--visitors',
             },
             {
                 label: 'CPV',
                 sub: 'Cost per visitor',
-                value: visitors > 0 ? fmtMoney(cost / visitors) : '—',
+                value: visitors > 0 ? fmtRate(cost / visitors) : '—',
                 icon: 'cpv',
                 tone: 'stats-v2-kpi-icon--cost',
             },
             {
                 label: 'PPV',
                 sub: 'Profit per visitor',
-                value: visitors > 0 ? fmtMoney(profit / visitors) : '—',
+                value: visitors > 0 ? fmtRate(profit / visitors) : '—',
                 icon: 'epv',
                 tone: profit >= 0 ? 'stats-v2-kpi-icon--profit-pos' : 'stats-v2-kpi-icon--profit-neg',
                 valueClass: profit >= 0 ? 'profit-positive' : 'profit-negative',
@@ -1101,7 +1121,7 @@
             {
                 label: 'Profit / Click',
                 sub: 'Net per action click',
-                value: clicks > 0 ? fmtMoney(profit / clicks) : '—',
+                value: clicks > 0 ? fmtRate(profit / clicks) : '—',
                 icon: 'ppclick',
                 tone: profit >= 0 ? 'stats-v2-kpi-icon--profit-pos' : 'stats-v2-kpi-icon--profit-neg',
                 valueClass: profit >= 0 ? 'profit-positive' : 'profit-negative',

@@ -1,5 +1,5 @@
 # Simple KUMA - Apache Configuration
-# Document root is /home/subscribler/public_html
+# Document root is the app install directory (or point vhost at /public)
 # This redirects requests to /public/ folder
 
 <IfModule mod_rewrite.c>

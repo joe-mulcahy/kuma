@@ -862,6 +862,9 @@ $db->close();
                                         <option value="Asia/Tokyo" <?= ($editOffer['schedule_timezone'] ?? 'UTC') === 'Asia/Tokyo' ? 'selected' : '' ?>>Tokyo (JST)</option>
                                         <option value="Australia/Sydney" <?= ($editOffer['schedule_timezone'] ?? 'UTC') === 'Australia/Sydney' ? 'selected' : '' ?>>Sydney (AEDT)</option>
                                     </optgroup>
+                                    <optgroup label="Latin America">
+                                        <option value="America/Bogota" <?= ($editOffer['schedule_timezone'] ?? 'UTC') === 'America/Bogota' ? 'selected' : '' ?>>Bogotá (COT, UTC-5)</option>
+                                    </optgroup>
                                     <optgroup label="Other">
                                         <option value="UTC" <?= ($editOffer['schedule_timezone'] ?? 'UTC') === 'UTC' ? 'selected' : '' ?>>UTC (Universal)</option>
                                     </optgroup>
@@ -962,6 +965,9 @@ $db->close();
                                         <option value="Asia/Singapore" <?= ($editOffer['cap_timezone'] ?? 'UTC') === 'Asia/Singapore' ? 'selected' : '' ?>>Singapore (SGT)</option>
                                         <option value="Asia/Tokyo" <?= ($editOffer['cap_timezone'] ?? 'UTC') === 'Asia/Tokyo' ? 'selected' : '' ?>>Tokyo (JST)</option>
                                         <option value="Australia/Sydney" <?= ($editOffer['cap_timezone'] ?? 'UTC') === 'Australia/Sydney' ? 'selected' : '' ?>>Sydney (AEDT)</option>
+                                    </optgroup>
+                                    <optgroup label="Latin America">
+                                        <option value="America/Bogota" <?= ($editOffer['cap_timezone'] ?? 'UTC') === 'America/Bogota' ? 'selected' : '' ?>>Bogotá (COT, UTC-5)</option>
                                     </optgroup>
                                     <optgroup label="Other">
                                         <option value="UTC" <?= ($editOffer['cap_timezone'] ?? 'UTC') === 'UTC' ? 'selected' : '' ?>>UTC (Universal)</option>

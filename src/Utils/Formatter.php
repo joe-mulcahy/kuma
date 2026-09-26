@@ -11,6 +11,45 @@ namespace SimpleKuma\Utils;
 class Formatter
 {
     /**
+     * Canonical IANA timezone name. Trims input, maps PT/CT/… abbreviations,
+     * and falls back to UTC for empty or invalid values so date ranges are not
+     * silently interpreted as naive UTC calendar days from a padded string.
+     */
+    public static function normalizeTimezone(?string $userTimezone): string
+    {
+        $userTimezone = trim((string)($userTimezone ?? ''));
+        if ($userTimezone === '') {
+            return 'UTC';
+        }
+
+        $timezoneMap = [
+            'PT' => 'America/Los_Angeles',
+            'PST' => 'America/Los_Angeles',
+            'PDT' => 'America/Los_Angeles',
+            'ET' => 'America/New_York',
+            'EST' => 'America/New_York',
+            'EDT' => 'America/New_York',
+            'CT' => 'America/Chicago',
+            'CST' => 'America/Chicago',
+            'CDT' => 'America/Chicago',
+            'MT' => 'America/Denver',
+            'MST' => 'America/Denver',
+            'MDT' => 'America/Denver',
+        ];
+
+        if (isset($timezoneMap[$userTimezone])) {
+            $userTimezone = $timezoneMap[$userTimezone];
+        }
+
+        try {
+            return (new \DateTimeZone($userTimezone))->getName();
+        } catch (\Exception $e) {
+            error_log("Invalid timezone '{$userTimezone}': " . $e->getMessage());
+            return 'UTC';
+        }
+    }
+
+    /**
      * Format date/time using user's timezone
      */
     public static function formatDateTime(string $datetime, ?string $userTimezone = null, string $format = 'Y-m-d H:i:s'): string
@@ -20,42 +59,17 @@ class Formatter
         }
 
         try {
-            // Default to UTC if no timezone provided
-            $userTimezone = $userTimezone ?? 'UTC';
-            
-            // Normalize common timezone abbreviations
-            $timezoneMap = [
-                'PT' => 'America/Los_Angeles',
-                'PST' => 'America/Los_Angeles',
-                'PDT' => 'America/Los_Angeles',
-                'ET' => 'America/New_York',
-                'EST' => 'America/New_York',
-                'EDT' => 'America/New_York',
-                'CT' => 'America/Chicago',
-                'CST' => 'America/Chicago',
-                'CDT' => 'America/Chicago',
-                'MT' => 'America/Denver',
-                'MST' => 'America/Denver',
-                'MDT' => 'America/Denver',
-            ];
-            
-            if (isset($timezoneMap[$userTimezone])) {
-                $userTimezone = $timezoneMap[$userTimezone];
-            }
-            
-            // Validate timezone
+            $userTimezone = self::normalizeTimezone($userTimezone);
             $tz = new \DateTimeZone($userTimezone);
-            $userTimezone = $tz->getName(); // Get canonical name
-            
+
             // Create DateTime object from database datetime (assumed UTC)
             $dt = new \DateTime($datetime, new \DateTimeZone('UTC'));
-            
+
             // Convert to user's timezone
             $dt->setTimezone($tz);
-            
+
             return $dt->format($format);
         } catch (\Exception $e) {
-            // Fallback to original datetime if timezone conversion fails
             error_log("Invalid timezone '{$userTimezone}': " . $e->getMessage());
             return $datetime;
         }
@@ -131,34 +145,13 @@ class Formatter
      */
     public static function getTodayInTimezone(?string $userTimezone = null): string
     {
-        $userTimezone = $userTimezone ?? 'UTC';
-        
-        // Normalize common timezone abbreviations
-        $timezoneMap = [
-            'PT' => 'America/Los_Angeles',
-            'PST' => 'America/Los_Angeles',
-            'PDT' => 'America/Los_Angeles',
-            'ET' => 'America/New_York',
-            'EST' => 'America/New_York',
-            'EDT' => 'America/New_York',
-            'CT' => 'America/Chicago',
-            'CST' => 'America/Chicago',
-            'CDT' => 'America/Chicago',
-            'MT' => 'America/Denver',
-            'MST' => 'America/Denver',
-            'MDT' => 'America/Denver',
-        ];
-        
-        if (isset($timezoneMap[$userTimezone])) {
-            $userTimezone = $timezoneMap[$userTimezone];
-        }
-        
+        $userTimezone = self::normalizeTimezone($userTimezone);
+
         try {
             $tz = new \DateTimeZone($userTimezone);
             $now = new \DateTime('now', $tz);
             return $now->format('Y-m-d');
         } catch (\Exception $e) {
-            // Fallback to UTC
             return date('Y-m-d');
         }
     }
@@ -169,47 +162,24 @@ class Formatter
      */
     public static function convertDateRangeToUTC(string $dateFrom, string $dateTo, ?string $userTimezone = null): array
     {
-        $userTimezone = $userTimezone ?? 'UTC';
-        
-        // Normalize common timezone abbreviations
-        $timezoneMap = [
-            'PT' => 'America/Los_Angeles',
-            'PST' => 'America/Los_Angeles',
-            'PDT' => 'America/Los_Angeles',
-            'ET' => 'America/New_York',
-            'EST' => 'America/New_York',
-            'EDT' => 'America/New_York',
-            'CT' => 'America/Chicago',
-            'CST' => 'America/Chicago',
-            'CDT' => 'America/Chicago',
-            'MT' => 'America/Denver',
-            'MST' => 'America/Denver',
-            'MDT' => 'America/Denver',
-        ];
-        
-        if (isset($timezoneMap[$userTimezone])) {
-            $userTimezone = $timezoneMap[$userTimezone];
-        }
-        
+        $userTimezone = self::normalizeTimezone($userTimezone);
+
         try {
-            // Validate timezone
             $tz = new \DateTimeZone($userTimezone);
-            $userTimezone = $tz->getName(); // Get canonical name
-            
+
             // Create start of day in user's timezone
             $start = new \DateTime($dateFrom . ' 00:00:00', $tz);
             $start->setTimezone(new \DateTimeZone('UTC'));
-            
+
             // Create end of day in user's timezone
             $end = new \DateTime($dateTo . ' 23:59:59', $tz);
             $end->setTimezone(new \DateTimeZone('UTC'));
-            
+
             return [
                 'from' => $start->format('Y-m-d H:i:s'),
                 'to' => $end->format('Y-m-d H:i:s')
             ];
         } catch (\Exception $e) {
-            // Fallback to UTC if timezone is invalid
             error_log("Invalid timezone '{$userTimezone}': " . $e->getMessage());
             return [
                 'from' => $dateFrom . ' 00:00:00',

@@ -46,8 +46,8 @@ class DatabaseValidator
             $normalized = WebPathResolver::normalizeBaseUrl($data['base_url']);
             if (!filter_var($normalized, FILTER_VALIDATE_URL)) {
                 $this->errors['base_url'] = 'Base URL must be a valid URL (e.g., https://track.example.com or https://example.com/folder)';
-            } elseif (!str_starts_with(strtolower($normalized), 'https://')) {
-                $this->errors['base_url'] = 'Base URL must use HTTPS (https://). Simple KUMA requires SSL for secure sessions and tracking.';
+            } elseif (!$this->isAllowedBaseUrlScheme($normalized)) {
+                $this->errors['base_url'] = 'Base URL must use HTTPS (https://). HTTP is only allowed on localhost/local development hosts (XAMPP, .local, .test).';
             } elseif (
                 WebPathResolver::baseUrlSharesAdminHost($normalized)
                 && empty($data['base_url_same_host_ack'])
@@ -210,6 +210,23 @@ class DatabaseValidator
         }
 
         $this->connection = null;
+    }
+
+    /**
+     * HTTPS required in production; HTTP allowed only on local development hosts.
+     */
+    private function isAllowedBaseUrlScheme(string $normalizedUrl): bool
+    {
+        $scheme = strtolower((string) (parse_url($normalizedUrl, PHP_URL_SCHEME) ?? ''));
+        if ($scheme === 'https') {
+            return true;
+        }
+
+        if ($scheme !== 'http') {
+            return false;
+        }
+
+        return WebPathResolver::isLocalDevelopmentHost(WebPathResolver::extractHost($normalizedUrl));
     }
 
     /**

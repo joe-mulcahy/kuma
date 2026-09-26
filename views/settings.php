@@ -77,25 +77,6 @@ function fetchAndSyncFacebookAdAccounts($db, $integrationId, $accessToken, $prox
     
     $adAccountEntity = new \SimpleKuma\Entity\FacebookMarketingAdAccount($db);
     
-    // TEMPORARY: List of ad account IDs to exclude from import (numeric IDs only)
-    $excludedAdAccountIds = [
-        '1504051704056225', // Gutters
-        '3025569751081602', // Bathroom Remodel
-        '737217094281750',  // Conceal Carry
-        '516733532603754',  // Home Security
-        '6266888846696915', // Home Warranty
-        '2065200140361975', // Home Warranty 2
-        '911802023290518'   // Window Replacement
-    ];
-    
-    // Helper function to check if an account ID should be excluded
-    // Handles both "act_123456789" and "123456789" formats
-    $isExcluded = function($accountId) use ($excludedAdAccountIds) {
-        // Remove "act_" prefix if present for comparison
-        $numericId = preg_replace('/^act_/', '', $accountId);
-        return in_array($numericId, $excludedAdAccountIds, true);
-    };
-    
     // Fetch ad accounts from Facebook API
     // Include timezone_name field to auto-detect ad account timezone
     $adAccountsUrl = "https://graph.facebook.com/v24.0/me/adaccounts?access_token=" . urlencode($accessToken) . "&fields=id,name,account_id,currency,business,timezone_name&limit=100";
@@ -119,11 +100,7 @@ function fetchAndSyncFacebookAdAccounts($db, $integrationId, $accessToken, $prox
         if (isset($adAccountsData['data']) && is_array($adAccountsData['data'])) {
             $accounts = [];
             foreach ($adAccountsData['data'] as $account) {
-                // TEMPORARY: Skip excluded ad accounts
                 $accountId = $account['id'] ?? '';
-                if ($isExcluded($accountId)) {
-                    continue; // Skip this ad account
-                }
                 
                 // Extract business manager ID if available
                 $businessId = null;
@@ -2353,6 +2330,7 @@ $settingsTabs = [
     ['slug' => 'geoip', 'label' => 'Geolocation'],
     ['slug' => 'edge-redirect', 'label' => 'Edge Redirect'],
     ['slug' => 'updates', 'label' => 'Updates'],
+    ['slug' => 'honeycomb', 'label' => 'Honeycomb', 'href' => '?page=honeycomb'],
     ['slug' => 'about', 'label' => 'About Kuma'],
 ];
 $settingsTabs = array_values(array_filter(
@@ -2366,7 +2344,8 @@ $settingsTabs = array_values(array_filter(
         <label for="settings-section-select" class="settings-mobile-nav__label">Section</label>
         <select id="settings-section-select" class="settings-mobile-select" aria-label="Settings section">
             <?php foreach ($settingsTabs as $tab): ?>
-                <option value="?page=settings&amp;tab=<?= htmlspecialchars($tab['slug']) ?>"
+                <?php $tabHref = $tab['href'] ?? ('?page=settings&tab=' . $tab['slug']); ?>
+                <option value="<?= htmlspecialchars($tabHref) ?>"
                     <?= $activeTab === $tab['slug'] ? 'selected' : '' ?>>
                     <?= htmlspecialchars($tab['label']) ?>
                 </option>
@@ -2376,7 +2355,8 @@ $settingsTabs = array_values(array_filter(
 
     <nav class="settings-rail" aria-label="Settings sections">
         <?php foreach ($settingsTabs as $tab): ?>
-            <a href="?page=settings&amp;tab=<?= htmlspecialchars($tab['slug']) ?>"
+            <?php $tabHref = $tab['href'] ?? ('?page=settings&tab=' . $tab['slug']); ?>
+            <a href="<?= htmlspecialchars($tabHref) ?>"
                class="settings-rail__item<?= $activeTab === $tab['slug'] ? ' is-active' : '' ?>">
                 <?= htmlspecialchars($tab['label']) ?>
             </a>
@@ -4684,23 +4664,30 @@ $settingsTabs = array_values(array_filter(
                                 ⚙️ Cron Job Setup Required
                             </h3>
                             <p style="margin: 0 0 12px 0; font-size: 14px; color: #856404;">
-                                For cost tracking to work, you <strong>must</strong> set up a cron job to run hourly. The script will fetch Facebook ad spend data and sync it to your database.
+                                For cost tracking to work, you <strong>must</strong> set up a cron job to run hourly. The recommended script fetches Facebook spend, Google Ads spend, and Honeycomb traffic-source costs. Legacy Facebook-only crontab lines still work.
                             </p>
                             
                             <div style="margin-bottom: 12px;">
-                                <strong style="color: #856404; display: block; margin-bottom: 6px;">Cron Script Path:</strong>
+                                <strong style="color: #856404; display: block; margin-bottom: 6px;">Recommended (Facebook + Google + Honeycomb):</strong>
+                                <code style="display: block; padding: 8px; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 13px; color: #333; word-break: break-all;">
+                                    0 * * * * /usr/local/bin/php <?= htmlspecialchars(ROOT_PATH) ?>/scripts/kuma-traffic-api-cron.php >> <?= htmlspecialchars(ROOT_PATH) ?>/storage/logs/kuma-traffic-api-cron.log 2>&1
+                                </code>
+                            </div>
+
+                            <div style="margin-bottom: 12px;">
+                                <strong style="color: #856404; display: block; margin-bottom: 6px;">Facebook-only script (still valid):</strong>
                                 <code style="display: block; padding: 8px; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 13px; color: #333; word-break: break-all;">
                                     <?= htmlspecialchars(ROOT_PATH) ?>/scripts/fb_cost_updater.php
                                 </code>
                             </div>
 
                             <div style="margin-bottom: 12px;">
-                                <strong style="color: #856404; display: block; margin-bottom: 6px;">Cron Command (runs every hour):</strong>
+                                <strong style="color: #856404; display: block; margin-bottom: 6px;">Facebook-only cron command:</strong>
                                 <code style="display: block; padding: 8px; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 13px; color: #333; word-break: break-all;">
                                     0 * * * * /usr/local/bin/php <?= htmlspecialchars(ROOT_PATH) ?>/scripts/fb_cost_updater.php >> <?= htmlspecialchars(ROOT_PATH) ?>/public/cron-output.log 2>&1
                                 </code>
                                 <div style="margin-top: 8px; padding: 8px; background: #fff3cd; border-left: 3px solid #ffc107; font-size: 12px; color: #856404;">
-                                    <strong>Note:</strong> The script logs to <code>storage/logs/fb_cost_updater.log</code> automatically. The cron output log above (in public folder) captures any PHP errors that occur before the script runs.
+                                    <strong>Note:</strong> The Facebook script logs to <code>storage/logs/fb_cost_updater.log</code> automatically. If both the recommended script and this line run in the same hour, Facebook is fetched once.
                                 </div>
                             </div>
 
@@ -4984,6 +4971,8 @@ $settingsTabs = array_values(array_filter(
                             Schedule <code>scripts/run-data-retention-cron.php</code> daily: archive old clicks out of the hot table, then optionally purge raw rows by age.
                             Campaign KPI / chart / offer / LP stats keep using pre-aggregated summaries — raw purge does not wipe those reports.
                             Geo, device, and visitor-log drill-downs need raw or archived click rows.
+                            Live CPU / RAM / disk meters and warning banners live on
+                            <a href="<?= APP_BASE_URL ?>/index.php?page=server-status">Server Status</a>.
                         </p>
                         <?php
                         $storageWarnActive = ($allSettings['storage_warn_active'] ?? '0') === '1';
@@ -5583,6 +5572,9 @@ $settingsTabs = array_values(array_filter(
                                                 <option value="Asia/Tokyo" <?= $normalizedTimezone === 'Asia/Tokyo' ? 'selected' : '' ?>>Tokyo (JST)</option>
                                                 <option value="Australia/Sydney" <?= $normalizedTimezone === 'Australia/Sydney' ? 'selected' : '' ?>>Sydney (AEDT)</option>
                                             </optgroup>
+                                            <optgroup label="Latin America">
+                                                <option value="America/Bogota" <?= $normalizedTimezone === 'America/Bogota' ? 'selected' : '' ?>>Bogotá (COT, UTC-5)</option>
+                                            </optgroup>
                                             <optgroup label="Other">
                                                 <option value="UTC" <?= $normalizedTimezone === 'UTC' ? 'selected' : '' ?>>UTC (Universal)</option>
                                             </optgroup>
@@ -5743,6 +5735,36 @@ $settingsTabs = array_values(array_filter(
                     You need Settings edit or Update manage permission to run database migrations.
                 </p>
             <?php endif; ?>
+        </div>
+    </div>
+
+    <?php
+    $honeyRepoDisplay = \SimpleKuma\Honeycomb\HoneycombConfig::DEFAULT_REPO;
+    $kumaRepoDisplay = 'kumatrk/initialrelease';
+    $kumaEvergreen = $updateChecker->getEvergreenReleaseUrl();
+    if (preg_match('#github\.com/([^/]+/[^/]+)/#', $kumaEvergreen, $kumaRepoMatch) === 1) {
+        $kumaRepoDisplay = $kumaRepoMatch[1];
+    }
+    ?>
+    <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+            <h2 class="card-title">GitHub repositories</h2>
+        </div>
+        <div class="card-body">
+            <p style="margin: 0 0 16px 0; color: #666; font-size: 14px; line-height: 1.5;">
+                Core Kuma updates and Honeycomb addons are tracked separately so an addon change does not require a full Kuma zip.
+            </p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;">
+                <strong>Kuma core:</strong>
+                <code><?= htmlspecialchars($kumaRepoDisplay) ?></code>
+                · <a href="https://github.com/<?= htmlspecialchars($kumaRepoDisplay) ?>" target="_blank" rel="noopener noreferrer">GitHub</a>
+            </p>
+            <p style="margin: 0; font-size: 14px;">
+                <strong>Honeycomb catalog:</strong>
+                <code><?= htmlspecialchars($honeyRepoDisplay) ?></code>
+                · <a href="https://github.com/<?= htmlspecialchars($honeyRepoDisplay) ?>" target="_blank" rel="noopener noreferrer">GitHub</a>
+                · <a href="<?= APP_BASE_URL ?>/index.php?page=honeycomb">Open Honeycomb</a>
+            </p>
         </div>
     </div>
 
@@ -5911,6 +5933,10 @@ $settingsTabs = array_values(array_filter(
     $dbipAvailable = $dbipProvider->isAvailable();
     $ip2locationAvailable = $ip2locationProvider->isAvailable();
     $ipinfoAvailable = $ipinfoProvider->isAvailable();
+    $asnLookup = \SimpleKuma\GeoIP\AsnLookup::instance();
+    $asnSample = $asnLookup->lookup('8.8.8.8');
+    $asnPath = $asnLookup->getDatabasePath();
+    $asnAvailable = $asnPath !== null && is_file($asnPath);
     
     // Debug: Get the actual paths found by providers (using reflection to access private property)
     $dbipPath = null;
@@ -5989,7 +6015,8 @@ $settingsTabs = array_values(array_filter(
             <p style="margin-bottom: 12px;">
                 Simple KUMA looks up visitor location using a <strong>multi-database fallback</strong>: it tries
                 DB-IP Lite first, then IP2Location LITE, then IPinfo DB-Lite, until one returns a match.
-                No API keys are required — lookups run from local database files on your server.
+                ISP / ASN organization names come from a separate local <strong>DB-IP ASN Lite</strong> file
+                (written once onto each click). No API keys are required — lookups run from local database files on your server.
             </p>
             <p style="margin-bottom: 12px;">
                 The location databases that ship with Kuma are the <strong>light / free</strong> editions of each provider.
@@ -6125,6 +6152,29 @@ php composer.phar install --no-dev --optimize-autoloader</pre>
                 </p>
                 <?php endif; ?>
             </div>
+
+            <!-- DB-IP ASN (ISP) -->
+            <div style="background: white; border: 2px solid <?= $asnAvailable ? '#28a745' : '#dc3545' ?>; border-radius: 8px; padding: 20px;">
+                <h3 style="margin-top: 0; color: <?= $asnAvailable ? '#28a745' : '#dc3545' ?>;">
+                    <?= $asnAvailable ? '✓' : '✗' ?> DB-IP ASN Lite (ISP)
+                </h3>
+                <p style="color: #666; font-size: 14px;">
+                    <strong>Status:</strong> <?= $asnAvailable ? 'Available' : 'Not Found' ?><br>
+                    <strong>Format:</strong> MMDB<br>
+                    <strong>License:</strong> CC BY 4.0 (ok to ship with Kuma)<br>
+                    <strong>Use:</strong> Writes <code>clicks.isp</code> at click time
+                    <?php if ($asnAvailable && !empty($asnSample['isp'])): ?>
+                    <br><strong>Sample (8.8.8.8):</strong> <?= htmlspecialchars((string) $asnSample['isp']) ?>
+                    <?php endif; ?>
+                </p>
+                <?php if (!$asnAvailable): ?>
+                <p style="color: #dc3545; font-size: 13px; margin-top: 12px;">
+                    <strong>Download:</strong> <a href="https://db-ip.com/db/download/ip-to-asn-lite" target="_blank" rel="noopener">db-ip.com ASN Lite</a><br>
+                    <strong>Expected file:</strong> <code>DBIP-ASN-Lite.mmdb</code><br>
+                    Or: <code>php scripts/download-geoip-databases.php --dbip-asn</code>
+                </p>
+                <?php endif; ?>
+            </div>
         </div>
         
         <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 16px; border-radius: 4px; margin-bottom: 24px;">
@@ -6137,6 +6187,11 @@ php composer.phar install --no-dev --optimize-autoloader</pre>
                     <strong>DB-IP Lite:</strong>
                     <a href="https://db-ip.com/db/download/ip-to-city-lite" target="_blank" rel="noopener">Download</a>
                     · IP Geolocation by DB-IP (<a href="https://db-ip.com" target="_blank" rel="noopener">db-ip.com</a>) · expected <code>dbip-city-lite.mmdb</code>
+                </li>
+                <li>
+                    <strong>DB-IP ASN Lite (ISP):</strong>
+                    <a href="https://db-ip.com/db/download/ip-to-asn-lite" target="_blank" rel="noopener">Download</a>
+                    · CC BY 4.0 · expected <code>DBIP-ASN-Lite.mmdb</code>
                 </li>
                 <li>
                     <strong>IP2Location LITE:</strong>
@@ -6356,6 +6411,19 @@ php composer.phar install --no-dev --optimize-autoloader</pre>
             <p>
                 Simple KUMA is creator-led and community-powered. This page recognizes the people
                 whose code, ideas, and commitment have made a major impact on the project.
+            </p>
+            <p style="margin-top: 1rem;">
+                <a href="<?= htmlspecialchars(defined('USER_GUIDE_URL') ? USER_GUIDE_URL : 'https://simplekuma.com/user-guide/') ?>"
+                   target="_blank" rel="noopener noreferrer"
+                   style="font-weight: 700; color: inherit; text-decoration: underline;">
+                    Open the User Guide
+                </a>
+                for setup help and every page in Kuma.
+                <a href="<?= htmlspecialchars(defined('USER_GUIDE_URL') ? rtrim(USER_GUIDE_URL, '/') . '/print/' : 'https://simplekuma.com/user-guide/print/') ?>"
+                   target="_blank" rel="noopener noreferrer"
+                   style="font-weight: 600; color: inherit; text-decoration: underline; margin-left: 0.35rem;">
+                    Print / PDF
+                </a>
             </p>
         </header>
 

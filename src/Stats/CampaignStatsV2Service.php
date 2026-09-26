@@ -9,6 +9,8 @@ use SimpleKuma\Database\ClicksTableResolver;
 use SimpleKuma\Entity\Campaign;
 use SimpleKuma\Entity\TrafficSource;
 use SimpleKuma\Facebook\FacebookCostAggregator;
+use SimpleKuma\Honeycomb\BindingStore;
+use SimpleKuma\Honeycomb\HoneycombCostAggregator;
 use SimpleKuma\Utils\Formatter;
 
 /**
@@ -203,7 +205,13 @@ class CampaignStatsV2Service
                 $utcRange['to'],
                 (string)$campaignId
             );
-            $totalCost = $manualCost + $fbCost + $gaCost;
+            $honeyCost = (new HoneycombCostAggregator($this->db))->getCampaignTotalCost(
+                $campaignId,
+                $utcRange['from'],
+                $utcRange['to'],
+                $timezone
+            );
+            $totalCost = $manualCost + $fbCost + $gaCost + $honeyCost;
         }
 
         return $this->buildSummaryFromTotals(
@@ -260,7 +268,13 @@ class CampaignStatsV2Service
                 $utcRange['to'],
                 (string)$campaignId
             );
-            $totalCost = $manualCost + $fbCost + $gaCost;
+            $honeyCost = (new HoneycombCostAggregator($this->db))->getCampaignTotalCost(
+                $campaignId,
+                $utcRange['from'],
+                $utcRange['to'],
+                $timezone
+            );
+            $totalCost = $manualCost + $fbCost + $gaCost + $honeyCost;
         }
 
         $visitorsCount = (int)($totals['visitors'] ?? 0);
@@ -446,6 +460,11 @@ class CampaignStatsV2Service
             || !empty($campaign['facebook_marketing_integration_id'])
             || !empty($campaign['google_ads_integration_id'])
         ) {
+            return true;
+        }
+
+        $campaignId = (int)($campaign['id'] ?? 0);
+        if ($campaignId > 0 && (new BindingStore($this->db))->campaignHasBinding($campaignId)) {
             return true;
         }
 
@@ -1606,7 +1625,7 @@ class CampaignStatsV2Service
         if ($hasExclusionFlag) {
             $sql = "
                 SELECT SUM(CASE WHEN cl.exclude_from_stats = 0 THEN 1 ELSE 0 END) AS visitors,
-                       SUM(CASE WHEN cl.exclude_from_stats = 0 AND cl.lp_click = 1 THEN 1 ELSE 0 END) AS lp_clicks,
+                       SUM(CASE WHEN cl.exclude_from_stats = 0 AND cl.lp_click = 1 AND cl.landing_page_id IS NOT NULL THEN 1 ELSE 0 END) AS lp_clicks,
                        SUM(CASE WHEN cl.exclude_from_stats = 0 AND cl.lp_click = 1 AND cl.landing_page_id IS NULL THEN 1 ELSE 0 END) AS direct_clicks,
                        SUM(CASE WHEN cl.exclude_from_stats = 1 THEN 1 ELSE 0 END) AS bot_clicks,
                        COALESCE(SUM(CASE WHEN cl.exclude_from_stats = 0 THEN cl.cost ELSE 0 END), 0) AS manual_cost
@@ -1616,7 +1635,7 @@ class CampaignStatsV2Service
         } else {
             $sql = "
                 SELECT COUNT(*) AS visitors,
-                       SUM(CASE WHEN cl.lp_click = 1 THEN 1 ELSE 0 END) AS lp_clicks,
+                       SUM(CASE WHEN cl.lp_click = 1 AND cl.landing_page_id IS NOT NULL THEN 1 ELSE 0 END) AS lp_clicks,
                        SUM(CASE WHEN cl.lp_click = 1 AND cl.landing_page_id IS NULL THEN 1 ELSE 0 END) AS direct_clicks,
                        0 AS bot_clicks,
                        COALESCE(SUM(cl.cost), 0) AS manual_cost
@@ -1737,7 +1756,7 @@ class CampaignStatsV2Service
                 SELECT {$groupExpr} AS group_key
                        {$selectLabel},
                        COUNT(*) AS clicks,
-                       SUM(CASE WHEN cl.lp_click = 1 THEN 1 ELSE 0 END) AS lp_clicks,
+                       SUM(CASE WHEN cl.lp_click = 1 AND cl.landing_page_id IS NOT NULL THEN 1 ELSE 0 END) AS lp_clicks,
                        SUM(CASE WHEN cl.lp_click = 1 AND cl.landing_page_id IS NULL THEN 1 ELSE 0 END) AS direct_clicks,
                        COALESCE(SUM(cl.cost), 0) AS manual_cost
                 FROM clicks cl{$force}
