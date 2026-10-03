@@ -109,6 +109,8 @@ final class EdgeClickIngest
                 'region' => $payload['region'] ?? null,
                 'city' => $payload['city'] ?? null,
                 'postal' => $payload['postal'] ?? null,
+                'isp' => $payload['isp'] ?? null,
+                'connection_type' => $payload['connection_type'] ?? null,
             ],
             'device' => [
                 'device' => $payload['device'] ?? null,
@@ -119,6 +121,7 @@ final class EdgeClickIngest
                 'browser' => $payload['browser'] ?? null,
                 'browser_version' => $payload['browser_version'] ?? null,
             ],
+            'language' => isset($payload['language']) ? (string) $payload['language'] : null,
             'source' => 'edge',
         ]);
 

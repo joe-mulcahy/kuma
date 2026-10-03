@@ -255,20 +255,23 @@ final class DashboardStatsService
         $costMap = $this->batchCampaignCosts($idsForCost, $utcFrom, $utcTo, $userTimezone);
         $fbCostMap = $costMap['fb'] ?? [];
         $gaCostMap = $costMap['ga'] ?? [];
+        $honeyCostMap = $costMap['honey'] ?? [];
 
         foreach ($pageRows as &$row) {
             $cid = (int)$row['id'];
             $manual = (float)($row['manual_cost'] ?? 0);
             $gaCost = (float)($gaCostMap[$cid] ?? 0.0);
+            $honeyCost = (float)($honeyCostMap[$cid] ?? 0.0);
             if (isset($fbCostMap[$cid])) {
                 $fbPlusManual = (float)$fbCostMap[$cid];
                 $row['fb_cost'] = max(0.0, $fbPlusManual - $manual);
-                $row['cost'] = $fbPlusManual + $gaCost;
+                $row['cost'] = $fbPlusManual + $gaCost + $honeyCost;
             } else {
                 $row['fb_cost'] = 0.0;
-                $row['cost'] = $manual + $gaCost;
+                $row['cost'] = $manual + $gaCost + $honeyCost;
             }
             $row['ga_cost'] = $gaCost;
+            $row['honey_cost'] = $honeyCost;
             $row['invalid_clicks'] = (int)($row['invalid_clicks'] ?? 0);
         }
         unset($row);
@@ -888,16 +891,12 @@ final class DashboardStatsService
 
     /**
      * @param list<int> $campaignIds
-     * @return array<int, float>
-     */
-    /**
-     * @param list<int> $campaignIds
-     * @return array{fb: array<int, float>, ga: array<int, float>}
+     * @return array{fb: array<int, float>, ga: array<int, float>, honey: array<int, float>}
      */
     private function batchCampaignCosts(array $campaignIds, string $utcFrom, string $utcTo, string $userTimezone): array
     {
         if ($campaignIds === []) {
-            return ['fb' => [], 'ga' => []];
+            return ['fb' => [], 'ga' => [], 'honey' => []];
         }
 
         $fbIds = [];
@@ -993,7 +992,20 @@ final class DashboardStatsService
             }
         }
 
-        return ['fb' => $fbMap, 'ga' => $gaMap];
+        $honeyMap = [];
+        try {
+            $apiHoney = (new \SimpleKuma\Honeycomb\HoneycombCostAggregator($this->db))
+                ->getCostsByCampaignIds($campaignIds, $utcFrom, $utcTo, $userTimezone);
+            foreach ($apiHoney as $cid => $amount) {
+                if ((float)$amount > 0) {
+                    $honeyMap[(int)$cid] = (float)$amount;
+                }
+            }
+        } catch (\Exception $e) {
+            error_log('DashboardStatsService: batch Honeycomb cost error: ' . $e->getMessage());
+        }
+
+        return ['fb' => $fbMap, 'ga' => $gaMap, 'honey' => $honeyMap];
     }
 
     /**

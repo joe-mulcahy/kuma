@@ -35,17 +35,10 @@ final class StatsResponseCache
         $fbCostMax = 0;
         $gaCostMax = 0;
 
-        $result = $db->query('SELECT COALESCE(MAX(id), 0) AS m FROM clicks');
-        if ($result) {
-            $row = $result->fetch_assoc() ?: [];
-            $clickMax = (int)($row['m'] ?? 0);
-        }
-
-        $result = $db->query('SELECT COALESCE(MAX(id), 0) AS m FROM conversions');
-        if ($result) {
-            $row = $result->fetch_assoc() ?: [];
-            $convMax = (int)($row['m'] ?? 0);
-        }
+        // After bulk DELETE, InnoDB can leave a huge empty clicks tablespace where
+        // MAX(id) takes many seconds. Probe with LIMIT 1 first (cheap when empty).
+        $clickMax = self::maxIdIfNonEmpty($db, 'clicks');
+        $convMax = self::maxIdIfNonEmpty($db, 'conversions');
 
         $result = @$db->query('SELECT COALESCE(MAX(id), 0) AS m FROM ad_hourly_costs');
         if ($result) {
@@ -60,6 +53,25 @@ final class StatsResponseCache
         }
 
         return $clickMax . ':' . $convMax . ':' . $fbCostMax . ':' . $gaCostMax;
+    }
+
+    /** @return int MAX(id) or 0 when the table has no rows */
+    private static function maxIdIfNonEmpty(\mysqli $db, string $table): int
+    {
+        if (!preg_match('/^[a-z_]+$/', $table)) {
+            return 0;
+        }
+        $probe = @$db->query("SELECT 1 FROM `{$table}` LIMIT 1");
+        if (!$probe || $probe->num_rows === 0) {
+            return 0;
+        }
+        $result = @$db->query("SELECT COALESCE(MAX(id), 0) AS m FROM `{$table}`");
+        if (!$result) {
+            return 0;
+        }
+        $row = $result->fetch_assoc() ?: [];
+
+        return (int) ($row['m'] ?? 0);
     }
 
     /**

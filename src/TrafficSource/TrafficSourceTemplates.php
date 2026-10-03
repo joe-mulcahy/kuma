@@ -135,6 +135,7 @@ class TrafficSourceTemplates
             ],
             'taboola' => [
                 'name' => 'Taboola',
+                'provider_key' => 'taboola',
                 'cost_tracking_method' => 'manual_token',
                 'cost_param_key' => 'cost',
                 'cost_currency' => 'USD',
@@ -154,6 +155,39 @@ class TrafficSourceTemplates
                     self::tok('Publisher ID', 'site_id', '{site_id}'),
                     self::tok('Site Domain', 'site_domain', '{site_domain}'),
                     self::tok('TS Campaign Name', 'campaign_name', '{campaign_name}'),
+                ],
+            ],
+            'whop' => [
+                'name' => 'Whop Ads',
+                'provider_key' => 'whop',
+                'cost_tracking_method' => 'integrated_api',
+                'cost_param_key' => '',
+                'cost_currency' => 'USD',
+                'cost_tier' => TrafficSourceCostStatus::TIER_LIVE_API,
+                'blurb' => 'Whop Ads (Meta) — reserved click params Whop appends to destination URLs; spend syncs via Honeycomb',
+                'tokens' => [
+                    // Whop hierarchy (adcamp_ / adgrp_ / ad_)
+                    self::tok('Whop Campaign', 'wacid', ''),
+                    self::tok('Whop Ad Group', 'wasid', ''),
+                    self::tok('Whop Ad', 'waid', ''),
+                    // Meta network click id (platform-appended)
+                    self::tok('External ID', 'fbclid', ''),
+                    // Meta IDs Whop stamps on the landing URL
+                    self::tok('Meta Ad ID', 'utm_meta_ad_id', ''),
+                    self::tok('Meta Ad Set ID', 'utm_meta_adset_id', ''),
+                    self::tok('Meta Campaign ID', 'utm_meta_campaign_id', ''),
+                    // Surface / placement / creative names (utm_source = fb|ig|msg|an)
+                    self::tok('UTM Source', 'utm_source', ''),
+                    self::tok('UTM Medium', 'utm_medium', ''),
+                    self::tok('UTM Placement', 'utm_placement', ''),
+                    self::tok('UTM Content', 'utm_content', ''),
+                    self::tok('UTM Ad Set', 'utm_adset', ''),
+                    self::tok('UTM Whop', 'utm_whop', ''),
+                    // Whop internal click tags (also reserved on Meta destinations)
+                    self::tok('TW Source', 'tw_source', ''),
+                    self::tok('TW Ad ID', 'tw_adid', ''),
+                    // Note: _wuid / whop_page_url are LP→Kuma handoff params (pixel cookie),
+                    // not Whop-appended macros — do not put them on campaign URL templates.
                 ],
             ],
             'mgid' => [
@@ -331,9 +365,14 @@ class TrafficSourceTemplates
                 'template_keys' => ['facebook', 'google', 'youtube'],
             ],
             [
+                'title' => 'Honeycomb live API cost',
+                'description' => 'Install the matching Honeycomb addon, connect credentials, and paste remote campaign IDs on each Kuma campaign. Spend syncs on the hourly Honeycomb job.',
+                'template_keys' => ['taboola', 'whop'],
+            ],
+            [
                 'title' => 'Manual cost (URL parameter)',
                 'description' => 'Tracking tokens plus cost via URL when the network sends it (e.g. ?cost=…).',
-                'template_keys' => ['tiktok', 'zeropark', 'taboola', 'mgid', 'rollerads', 'richads'],
+                'template_keys' => ['tiktok', 'zeropark', 'mgid', 'rollerads', 'richads'],
             ],
             [
                 'title' => 'API integrations — cost sync coming soon',

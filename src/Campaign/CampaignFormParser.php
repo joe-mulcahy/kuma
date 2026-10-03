@@ -78,6 +78,10 @@ class CampaignFormParser
             'custom_tokens' => self::parseCustomTokens($post),
             'redirect_rules' => self::parseRedirectRules($post),
         ];
+        $data = array_merge($data, InactiveRedirectParser::fromInput($post));
+        if (!$isCreate && $origCampaign && !empty($origCampaign['id'])) {
+            $data['_editing_campaign_id'] = (int) $origCampaign['id'];
+        }
 
         $errors = $campaign->validate($data);
 
@@ -89,6 +93,11 @@ class CampaignFormParser
                     $errors['traffic_source_id'] = 'Please select a traffic source (Bing is not available for campaigns yet).';
                 }
             }
+        }
+
+        $whopLpError = self::validateWhopSingleLandingPage($tsData, (string) ($data['flow_type'] ?? ''), $rotation);
+        if ($whopLpError !== null) {
+            $errors['landing_pages'] = $whopLpError;
         }
 
         $customPostbackIds = !empty($post['custom_postback_ids']) && is_array($post['custom_postback_ids'])
@@ -188,6 +197,10 @@ class CampaignFormParser
             'custom_tokens' => $customTokens,
             'redirect_rules' => $redirectRules,
         ];
+        $data = array_merge($data, InactiveRedirectParser::fromInput($input));
+        if (!$isCreate && $origCampaign && !empty($origCampaign['id'])) {
+            $data['_editing_campaign_id'] = (int) $origCampaign['id'];
+        }
 
         $errors = $campaign->validate($data);
 
@@ -199,6 +212,11 @@ class CampaignFormParser
                     $errors['traffic_source_id'] = 'Please select a traffic source (Bing is not available for campaigns yet).';
                 }
             }
+        }
+
+        $whopLpError = self::validateWhopSingleLandingPage($tsData, (string) ($data['flow_type'] ?? ''), $rotation);
+        if ($whopLpError !== null) {
+            $errors['landing_pages'] = $whopLpError;
         }
 
         $customPostbackIds = [];
@@ -229,6 +247,40 @@ class CampaignFormParser
             'custom_postback_ids' => $customPostbackIds,
             'slugs' => $slugs,
         ];
+    }
+
+    /**
+     * Whop Ads: exactly one enabled landing page (ad destination = that LP URL).
+     * Returns an error message, or null when OK / not applicable.
+     */
+    private static function validateWhopSingleLandingPage(?array $tsData, string $flowType, array $rotation): ?string
+    {
+        if (!is_array($tsData) || trim((string) ($tsData['provider_key'] ?? '')) !== 'whop') {
+            return null;
+        }
+        if (!in_array($flowType, ['LP', 'Split'], true)) {
+            return null;
+        }
+
+        $lpRows = $flowType === 'LP'
+            ? (is_array($rotation['landing_pages'] ?? null) ? $rotation['landing_pages'] : [])
+            : (is_array($rotation['lp_path']['landing_pages'] ?? null) ? $rotation['lp_path']['landing_pages'] : []);
+
+        $enabledWhopLps = [];
+        foreach ($lpRows as $lpRow) {
+            if (!empty($lpRow['enabled']) && !empty($lpRow['id'])) {
+                $enabledWhopLps[] = (int) $lpRow['id'];
+            }
+        }
+
+        if (count($enabledWhopLps) === 0) {
+            return 'Whop Ads campaigns require exactly one landing page (the ad destination).';
+        }
+        if (count($enabledWhopLps) > 1) {
+            return 'Whop Ads campaigns allow only one landing page. Remove extra LPs or switch traffic source.';
+        }
+
+        return null;
     }
 
     private static function parseMinPostbackPayoutFromArray(array $input): ?float

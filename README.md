@@ -127,11 +127,11 @@ chmod 755 config storage storage/logs storage/cache
 ### Typical production crons
 
 ```cron
-# Facebook / Meta cost updater (adjust path & schedule)
-0 * * * * php /path/to/scripts/fb_cost_updater.php >> /path/to/storage/logs/fb_cost_updater.log 2>&1
+# Recommended: Facebook + Google Ads + Honeycomb traffic APIs (hourly)
+0 * * * * php /path/to/scripts/kuma-traffic-api-cron.php >> /path/to/storage/logs/kuma-traffic-api-cron.log 2>&1
 
-# Google Ads cost sync
-0 * * * * php /path/to/scripts/google_ads_cost_updater.php >> /path/to/storage/logs/google_ads_cost_updater.log 2>&1
+# Legacy Facebook-only / Google-only lines still work alongside the combined cron
+# (each job runs at most once per UTC hour)
 
 # Optional: Google conversion API retry
 */15 * * * * php /path/to/scripts/google_ads_conversion_uploader.php >> /path/to/storage/logs/google_ads_conversion_uploader.log 2>&1

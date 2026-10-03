@@ -24,20 +24,49 @@ class RetentionLifecycleRunner
 
         ob_start();
 
-        $probe = StorageHealth::probe($baseDir);
-        if ($probe !== null) {
+        $host = HostResourceHealth::probe($baseDir);
+        $disk = $host['disk'] ?? null;
+        if (is_array($disk)) {
             echo sprintf(
                 "Disk: %s used (%s free of %s) at %s\n",
-                $probe['used_percent'] . '%',
-                StorageHealth::formatBytes($probe['free_bytes']),
-                StorageHealth::formatBytes($probe['total_bytes']),
-                $probe['path']
+                $disk['used_percent'] . '%',
+                StorageHealth::formatBytes($disk['free_bytes']),
+                StorageHealth::formatBytes($disk['total_bytes']),
+                $disk['path']
             );
-            $over = StorageHealth::evaluateAndRecord($settings, $probe);
-            if ($over) {
-                $warnAt = (int) $settings->get('storage_warn_percent', '90');
-                echo "WARNING: disk usage >= {$warnAt}% — archive/purge settings below free space; summaries stay for KPIs.\n";
+        } else {
+            echo "Disk probe unavailable; continuing retention steps.\n";
+        }
 
+        if (is_array($host['cpu'] ?? null)) {
+            $cpu = $host['cpu'];
+            echo sprintf(
+                "CPU: load %s / %s / %s (%d cores, pressure %s%%)\n",
+                $cpu['load_1'],
+                $cpu['load_5'],
+                $cpu['load_15'],
+                $cpu['cores'],
+                $cpu['pressure_percent']
+            );
+        }
+        if (is_array($host['ram'] ?? null)) {
+            $ram = $host['ram'];
+            echo sprintf(
+                "RAM: %s%% used (%s available of %s)\n",
+                $ram['used_percent'],
+                StorageHealth::formatBytes($ram['available_bytes']),
+                StorageHealth::formatBytes($ram['total_bytes'])
+            );
+        }
+
+        $over = HostResourceHealth::evaluateAndRecord($settings, $host, $baseDir);
+        if ($over) {
+            foreach (HostResourceHealth::activeWarnings($settings) as $w) {
+                echo 'WARNING: ' . $w['label'] . ' — ' . $w['detail'] . "\n";
+            }
+
+            $diskOver = ($settings->get('storage_warn_active', '0') === '1');
+            if ($diskOver) {
                 $archiveDays = (int) $settings->get('archive_after_days', '365');
                 if ($archiveDays === 0) {
                     $emergencyDays = (int) $settings->get('storage_emergency_archive_days', '90');
@@ -46,11 +75,9 @@ class RetentionLifecycleRunner
                         $exitCode = max($exitCode, ClickDataArchiver::run($db, $emergencyDays));
                     }
                 }
-            } else {
-                echo "Disk usage under warning threshold.\n";
             }
         } else {
-            echo "Disk probe unavailable; continuing retention steps.\n";
+            echo "Host resources under warning thresholds.\n";
         }
 
         $archiveDays = (int) $settings->get('archive_after_days', '365');

@@ -9,15 +9,20 @@
  * - IPinfo DB-Lite (MMDB) - Direct download
  * 
  * Usage:
- *   php scripts/download-geoip-databases.php [--dbip] [--ip2location] [--ipinfo] [--all]
- * 
+ *   php scripts/download-geoip-databases.php [--dbip] [--dbip-asn] [--ip2location] [--ipinfo] [--all]
+ *
  * Options:
- *   --dbip        Download only DB-IP Lite
+ *   --dbip        Download only DB-IP City Lite
+ *   --dbip-asn    Download only DB-IP ASN Lite (ISP / AS organization; CC BY 4.0, ok to ship)
  *   --ip2location Download only IP2Location LITE (CSV format)
  *   --ipinfo      Download only IPinfo DB-Lite
- *   --all         Download all databases (default)
+ *   --all         Download all databases (default; includes ASN)
  *   --output      Output directory (default: ./geoip/)
- * 
+ *
+ * ISP detection uses redistributable DB-IP ASN Lite (geoip/DBIP-ASN-Lite.mmdb).
+ * Do NOT package MaxMind GeoLite2-ASN in the customer zip without a MaxMind
+ * commercial redistribution license; operators may still drop it in privately.
+ *
  * Note: IP2Location downloads CSV format. The IP2Location PHP library requires BIN format.
  *       You can convert CSV to BIN using IP2Location's conversion tools, or use the CSV
  *       with a custom CSV reader (not currently implemented).
@@ -26,8 +31,8 @@
 declare(strict_types=1);
 
 // Parse command line arguments
-$options = getopt('', ['dbip', 'ip2location', 'ipinfo', 'all', 'output:']);
-$downloadAll = !isset($options['dbip']) && !isset($options['ip2location']) && !isset($options['ipinfo']) || isset($options['all']);
+$options = getopt('', ['dbip', 'dbip-asn', 'ip2location', 'ipinfo', 'all', 'output:']);
+$downloadAll = !isset($options['dbip']) && !isset($options['dbip-asn']) && !isset($options['ip2location']) && !isset($options['ipinfo']) || isset($options['all']);
 $outputDir = $options['output'] ?? __DIR__ . '/../geoip/';
 
 // Ensure output directory exists
@@ -40,15 +45,27 @@ echo "========================\n\n";
 
 $errors = [];
 
-// Download DB-IP Lite
+// Download DB-IP City Lite
 if ($downloadAll || isset($options['dbip'])) {
-    echo "Downloading DB-IP Lite...\n";
+    echo "Downloading DB-IP City Lite...\n";
     try {
         downloadDBIP($outputDir);
-        echo "✓ DB-IP Lite downloaded successfully\n\n";
+        echo "✓ DB-IP City Lite downloaded successfully\n\n";
     } catch (Exception $e) {
-        $errors[] = "DB-IP Lite: " . $e->getMessage();
-        echo "✗ DB-IP Lite failed: " . $e->getMessage() . "\n\n";
+        $errors[] = "DB-IP City Lite: " . $e->getMessage();
+        echo "✗ DB-IP City Lite failed: " . $e->getMessage() . "\n\n";
+    }
+}
+
+// Download DB-IP ASN Lite (ISP)
+if ($downloadAll || isset($options['dbip-asn'])) {
+    echo "Downloading DB-IP ASN Lite...\n";
+    try {
+        downloadDBIPAsn($outputDir);
+        echo "✓ DB-IP ASN Lite downloaded successfully\n\n";
+    } catch (Exception $e) {
+        $errors[] = "DB-IP ASN Lite: " . $e->getMessage();
+        echo "✗ DB-IP ASN Lite failed: " . $e->getMessage() . "\n\n";
     }
 }
 
@@ -162,6 +179,69 @@ function downloadDBIP(string $outputDir): void
     }
     
     // Set permissions
+    chmod($outputFile, 0644);
+    echo "  Saved to: {$outputFile}\n";
+}
+
+/**
+ * Download DB-IP ASN Lite (ISP / AS organization) — CC BY 4.0, safe to ship in Kuma zip.
+ * Official URL: https://db-ip.com/db/download/ip-to-asn-lite
+ */
+function downloadDBIPAsn(string $outputDir): void
+{
+    $currentMonth = date('Y-m');
+    $previousMonth = date('Y-m', strtotime('-1 month'));
+
+    $urls = [
+        "https://download.db-ip.com/free/dbip-asn-lite-{$currentMonth}.mmdb.gz",
+        "https://download.db-ip.com/free/dbip-asn-lite-{$previousMonth}.mmdb.gz",
+    ];
+
+    $outputFile = $outputDir . '/DBIP-ASN-Lite.mmdb';
+    $tempFile = $outputDir . '/dbip-asn-lite.mmdb.gz';
+
+    $data = false;
+    foreach ($urls as $url) {
+        echo "  Trying: {$url}\n";
+        $data = @file_get_contents($url, false, stream_context_create([
+            'http' => [
+                'timeout' => 60,
+                'user_agent' => 'SimpleKUMA-GeoIP-Downloader/1.0',
+            ],
+        ]));
+        if ($data !== false && strlen($data) > 1000) {
+            break;
+        }
+        $data = false;
+    }
+
+    if ($data === false || strlen($data) < 1000) {
+        throw new Exception('Failed to download DB-IP ASN Lite. Manual: https://db-ip.com/db/download/ip-to-asn-lite');
+    }
+
+    file_put_contents($tempFile, $data);
+    echo '  Downloaded: ' . number_format(strlen($data) / 1024 / 1024, 2) . " MB\n";
+
+    echo "  Decompressing...\n";
+    $gz = gzopen($tempFile, 'rb');
+    if ($gz === false) {
+        unlink($tempFile);
+        throw new Exception('Failed to open ASN gzip file');
+    }
+    $decompressed = '';
+    while (!gzeof($gz)) {
+        $decompressed .= gzread($gz, 8192);
+    }
+    gzclose($gz);
+    unlink($tempFile);
+
+    file_put_contents($outputFile, $decompressed);
+    echo '  Decompressed: ' . number_format(strlen($decompressed) / 1024 / 1024, 2) . " MB\n";
+
+    if (!file_exists($outputFile) || filesize($outputFile) < 500000) {
+        throw new Exception('Downloaded ASN file appears invalid (too small)');
+    }
+
     chmod($outputFile, 0644);
     echo "  Saved to: {$outputFile}\n";
 }

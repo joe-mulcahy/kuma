@@ -96,6 +96,9 @@
         if (step === 2 && typeof window.toggleFacebookIntegration === 'function') {
             window.toggleFacebookIntegration();
         }
+        if (typeof window.syncWhopWizardUi === 'function') {
+            window.syncWhopWizardUi();
+        }
     }
 
     function clearStepErrors(step) {
@@ -163,22 +166,37 @@
                 return false;
             }
             if (flowType === 'LP' || flowType === 'Split') {
-                let hasLp = false;
+                let enabledLpCount = 0;
                 const lp = document.getElementById('lp_items');
                 if (lp) {
                     lp.querySelectorAll('div[style*="grid-template-columns"]').forEach(function (row) {
+                        if (row.style.display === 'none') return;
                         const cb = row.querySelector('input[type="checkbox"]');
                         const sel = row.querySelector('select[name="lp_id[]"]');
-                        if (cb && cb.checked && sel && sel.value) hasLp = true;
+                        if (cb && cb.checked && sel && sel.value) enabledLpCount++;
                     });
                 }
-                if (!hasLp) {
+                if (enabledLpCount === 0) {
                     const e = document.createElement('div');
                     e.className = 'wizard-field-error';
-                    e.textContent = 'Add at least one enabled landing page.';
+                    e.textContent = isWhopTrafficSourceSelected()
+                        ? 'Whop Ads requires exactly one landing page (the ad destination).'
+                        : 'Add at least one enabled landing page.';
                     lp.appendChild(e);
                     return false;
                 }
+                if (isWhopTrafficSourceSelected() && enabledLpCount > 1) {
+                    const e = document.createElement('div');
+                    e.className = 'wizard-field-error';
+                    e.textContent = 'Whop Ads allows only one landing page. Remove extra LPs.';
+                    lp.appendChild(e);
+                    return false;
+                }
+            }
+            if (isWhopTrafficSourceSelected() && flowType === 'DTO') {
+                const ft = form.querySelector('[name="flow_type"]');
+                showFieldError(ft, 'Whop Ads needs Landing Page → Offer (Pixel runs on your LP).');
+                return false;
             }
         }
 
@@ -205,21 +223,76 @@
             const sel = row.querySelector('select[name="offer_id[]"]');
             if (cb && cb.checked && sel && sel.value) offers++;
         });
+        let lpUrl = '—';
+        const destEl = document.getElementById('whop-ad-destination-url');
+        if (isWhopTrafficSourceSelected() && destEl) {
+            const t = (destEl.textContent || '').trim();
+            if (t && t !== 'Select a landing page above') lpUrl = t;
+        }
         const multiConvCb = form.querySelector('[name="allow_multiple_conversions"]');
         const multiConv = multiConvCb && multiConvCb.checked ? 'Yes' : 'No';
+        const edgeCb = form.querySelector('[name="edge_enabled"]');
+        const edgeOn = edgeCb && edgeCb.checked ? 'Yes' : 'No';
         const tagsInput = form.querySelector('[name="tags"]');
         const tagsVal = tagsInput && tagsInput.value.trim() ? tagsInput.value.trim() : '—';
-        dl.innerHTML =
+        const inactiveModeSel = form.querySelector('[name="inactive_redirect_mode"]');
+        let inactiveRedirectLabel = 'Off';
+        if (inactiveModeSel) {
+            const mode = inactiveModeSel.value;
+            if (mode === 'campaign') {
+                const campSel = form.querySelector('[name="inactive_redirect_campaign_id"]');
+                inactiveRedirectLabel = campSel && campSel.value
+                    ? ('Campaign: ' + campSel.selectedOptions[0].text.trim())
+                    : 'Another campaign (not selected)';
+            } else if (mode === 'url') {
+                const urlInput = form.querySelector('[name="inactive_redirect_url"]');
+                inactiveRedirectLabel = urlInput && urlInput.value.trim()
+                    ? ('URL: ' + urlInput.value.trim())
+                    : 'Custom URL (empty)';
+            }
+        }
+        const capiSel = form.querySelector('[name="facebook_capi_integration_id"]');
+        const capiLabel = (capiSel && capiSel.value && capiSel.selectedOptions[0])
+            ? capiSel.selectedOptions[0].text.trim()
+            : '—';
+        let honeycombSummary = '—';
+        const honeyWrap = document.getElementById('honeycomb_binding_fields');
+        if (honeyWrap) {
+            const enabled = [];
+            honeyWrap.querySelectorAll('.honeycomb-binding-panel').forEach(function (panel) {
+                if (panel.style.display === 'none') return;
+                const slug = panel.getAttribute('data-addon-slug') || '';
+                const cb = panel.querySelector('input[type="checkbox"][name*="[enabled]"]');
+                if (cb && cb.checked) {
+                    const title = (panel.querySelector('strong') || {}).textContent || slug || 'Addon';
+                    enabled.push(String(title).replace(/\s*\(Honeycomb\)\s*$/i, '').trim() || slug);
+                }
+            });
+            if (enabled.length) honeycombSummary = enabled.join(', ');
+        }
+        let html =
             '<dt>Campaign name</dt><dd>' + escapeHtml(name) + '</dd>' +
             '<dt>Tags</dt><dd>' + escapeHtml(tagsVal) + '</dd>' +
             '<dt>Status</dt><dd>' + escapeHtml(status) + '</dd>' +
+            '<dt>When paused/archived</dt><dd>' + escapeHtml(inactiveRedirectLabel) + '</dd>' +
             '<dt>Referrer privacy</dt><dd>' + escapeHtml(referrerMode) + '</dd>' +
             '<dt>Traffic source</dt><dd>' + escapeHtml(ts) + '</dd>' +
+            '<dt>Meta CAPI</dt><dd>' + escapeHtml(capiLabel) + '</dd>' +
             '<dt>Facebook ad account</dt><dd>' + escapeHtml(fbAcct) + '</dd>' +
             '<dt>Meta campaign</dt><dd>' + escapeHtml(fbCamp) + '</dd>' +
+            '<dt>Honeycomb</dt><dd>' + escapeHtml(honeycombSummary) + '</dd>' +
             '<dt>Flow type</dt><dd>' + escapeHtml(flow) + '</dd>' +
             '<dt>Enabled offers</dt><dd>' + offers + '</dd>' +
-            '<dt>Multiple conversions / click</dt><dd>' + multiConv + '</dd>';
+            '<dt>Multiple conversions / click</dt><dd>' + multiConv + '</dd>' +
+            '<dt>Edge redirect</dt><dd>' + edgeOn + '</dd>';
+        if (isWhopTrafficSourceSelected()) {
+            html += '<dt>Whop ad destination</dt><dd>' + escapeHtml(lpUrl) + '</dd>';
+        }
+        dl.innerHTML = html;
+        const whopReview = document.getElementById('wizard-whop-review-box');
+        if (whopReview) {
+            whopReview.style.display = isWhopTrafficSourceSelected() ? 'block' : 'none';
+        }
     }
 
     function goNext() {
@@ -285,6 +358,9 @@
         const ft = document.getElementById('flow_type').value;
         document.getElementById('lp_fields').style.display = ft === 'LP' || ft === 'Split' ? 'block' : 'none';
         document.getElementById('split_fields').style.display = ft === 'Split' ? 'block' : 'none';
+        if (typeof window.syncWhopWizardUi === 'function') {
+            window.syncWhopWizardUi();
+        }
     };
 
     window.updateSplitPercentage = function () {
@@ -293,6 +369,275 @@
         if (input && span) {
             const p = parseInt(input.value, 10) || 0;
             span.textContent = '(' + (100 - p) + '% Direct)';
+        }
+    };
+
+    window.isWhopTrafficSourceSelected = function () {
+        const ts = document.getElementById('traffic_source_id');
+        if (!ts) return false;
+        const opt = ts.options[ts.selectedIndex];
+        return !!(opt && (opt.getAttribute('data-provider-key') || '') === 'whop');
+    };
+
+    window.toggleHoneycombBindings = function () {
+        const wrap = document.getElementById('honeycomb_binding_fields');
+        const section = document.getElementById('campaign-form-section-honeycomb');
+        const ts = document.getElementById('traffic_source_id');
+        if (!wrap || !ts) return;
+        const opt = ts.options[ts.selectedIndex];
+        const providerKey = opt ? (opt.getAttribute('data-provider-key') || '') : '';
+        let any = false;
+        wrap.querySelectorAll('.honeycomb-binding-panel').forEach(function (panel) {
+            const always = panel.getAttribute('data-always-visible') === '1'
+                || panel.getAttribute('data-provider-key') === '*';
+            const match = always || (providerKey !== '' && panel.getAttribute('data-provider-key') === providerKey);
+            panel.style.display = match ? 'block' : 'none';
+            if (match) any = true;
+        });
+        wrap.style.display = any ? 'block' : 'none';
+        if (section) {
+            section.style.display = any ? '' : 'none';
+        }
+        if (typeof window.toggleRingbaLpCodes === 'function') {
+            window.toggleRingbaLpCodes();
+        }
+    };
+
+    window.syncWhopWizardUi = function () {
+        const isWhop = isWhopTrafficSourceSelected();
+        const trafficNote = document.getElementById('wizard-whop-traffic-note');
+        const flowHint = document.getElementById('wizard-whop-flow-hint');
+        const codesPanel = document.getElementById('whop-lp-codes-panel');
+        const flowTypeEl = document.getElementById('flow_type');
+
+        if (trafficNote) trafficNote.style.display = isWhop ? 'block' : 'none';
+        if (flowHint) flowHint.style.display = isWhop ? 'block' : 'none';
+        if (codesPanel) codesPanel.style.display = isWhop ? 'block' : 'none';
+
+        if (isWhop && flowTypeEl && flowTypeEl.value === 'DTO') {
+            flowTypeEl.value = 'LP';
+            document.getElementById('lp_fields').style.display = 'block';
+            document.getElementById('split_fields').style.display = 'none';
+        }
+
+        syncWhopLpRotationLimits(isWhop);
+        updateWhopAdDestination();
+        toggleHoneycombBindings();
+    };
+
+    window.syncWhopLpRotationLimits = function (isWhop) {
+        if (typeof isWhop === 'undefined') {
+            isWhop = isWhopTrafficSourceSelected();
+        }
+        const legendText = document.getElementById('lp_rotation_legend_text');
+        const equalizeBtn = document.getElementById('lp_equalize_weights_btn');
+        const helpDefault = document.getElementById('lp_rotation_help');
+        const helpWhop = document.getElementById('lp_rotation_whop_help');
+        const tip = document.getElementById('lp_rotation_tip');
+        const destBox = document.getElementById('whop-ad-destination-box');
+        const container = document.getElementById('lp_items');
+
+        if (legendText) {
+            legendText.textContent = isWhop
+                ? 'Whop Ads allows one landing page (ad destination)'
+                : 'Landing Page Rotation';
+        }
+        if (equalizeBtn) equalizeBtn.style.display = isWhop ? 'none' : '';
+        if (helpDefault) helpDefault.style.display = isWhop ? 'none' : '';
+        if (helpWhop) helpWhop.style.display = isWhop ? 'block' : 'none';
+        if (tip) {
+            tip.textContent = isWhop
+                ? '💡 Paste this LP’s URL into Whop Ads. Put Pixel + Kuma codes on that same page.'
+                : '💡 Make sure your LPs include the click tracker script';
+        }
+        if (destBox) {
+            const ft = document.getElementById('flow_type');
+            const flowOk = ft && (ft.value === 'LP' || ft.value === 'Split');
+            destBox.style.display = isWhop && flowOk ? 'block' : 'none';
+        }
+        document.querySelectorAll('.lp-add-btn').forEach(function (btn) {
+            btn.style.display = isWhop ? 'none' : '';
+        });
+        if (!container) return;
+
+        const rows = Array.from(container.querySelectorAll('div[style*="grid-template-columns"]'));
+        if (!rows.length) return;
+
+        if (!isWhop) {
+            rows.forEach(function (row) {
+                row.style.display = '';
+                const weightInput = row.querySelector('input[name="lp_weight[]"]');
+                const checkbox = row.querySelector('input[type="checkbox"]');
+                const select = row.querySelector('select[name="lp_id[]"]');
+                const hiddenInput = row.querySelector('input[type="hidden"][name^="lp_enabled"]');
+                if (weightInput) weightInput.removeAttribute('data-whop-locked');
+                if (checkbox) {
+                    checkbox.disabled = false;
+                    checkbox.style.pointerEvents = '';
+                    checkbox.style.opacity = '';
+                    if (row.hasAttribute('data-pre-whop-enabled')) {
+                        const wasEnabled = row.getAttribute('data-pre-whop-enabled') === '1';
+                        checkbox.checked = wasEnabled;
+                        if (hiddenInput) hiddenInput.value = wasEnabled ? '1' : '0';
+                        row.removeAttribute('data-pre-whop-enabled');
+                    }
+                }
+                setRotationControlLocked(select, weightInput, !!(checkbox && checkbox.checked));
+            });
+            return;
+        }
+
+        let keepIdx = 0;
+        for (let i = 0; i < rows.length; i++) {
+            const cb = rows[i].querySelector('input[type="checkbox"]');
+            const sel = rows[i].querySelector('select[name="lp_id[]"]');
+            if (cb && cb.checked && sel && sel.value) {
+                keepIdx = i;
+                break;
+            }
+        }
+        if (keepIdx === 0) {
+            for (let i = 0; i < rows.length; i++) {
+                const cb = rows[i].querySelector('input[type="checkbox"]');
+                if (cb && cb.checked) {
+                    keepIdx = i;
+                    break;
+                }
+            }
+        }
+
+        rows.forEach(function (row, idx) {
+            const checkbox = row.querySelector('input[type="checkbox"]');
+            const hiddenInput = row.querySelector('input[type="hidden"][name^="lp_enabled"]');
+            const select = row.querySelector('select[name="lp_id[]"]');
+            const weightInput = row.querySelector('input[name="lp_weight[]"]');
+            if (!row.hasAttribute('data-pre-whop-enabled') && checkbox) {
+                row.setAttribute('data-pre-whop-enabled', checkbox.checked ? '1' : '0');
+            }
+            if (idx === keepIdx) {
+                row.style.display = '';
+                if (checkbox) {
+                    checkbox.checked = true;
+                    checkbox.disabled = true;
+                    checkbox.style.pointerEvents = 'none';
+                    checkbox.style.opacity = '0.6';
+                }
+                if (hiddenInput) hiddenInput.value = '1';
+                if (weightInput) {
+                    weightInput.value = '100';
+                    weightInput.setAttribute('data-whop-locked', '1');
+                    weightInput.readOnly = true;
+                    weightInput.style.background = '#f5f5f5';
+                    weightInput.style.color = '#999';
+                    weightInput.style.cursor = 'not-allowed';
+                }
+                setRotationControlLocked(select, weightInput, true);
+                if (weightInput) {
+                    weightInput.readOnly = true;
+                }
+            } else {
+                row.style.display = 'none';
+                if (checkbox) {
+                    checkbox.checked = false;
+                    checkbox.disabled = true;
+                }
+                if (hiddenInput) hiddenInput.value = '0';
+                if (weightInput) {
+                    weightInput.value = '0';
+                    weightInput.setAttribute('data-whop-locked', '1');
+                }
+                setRotationControlLocked(select, weightInput, false);
+            }
+        });
+    };
+
+    window.updateWhopAdDestination = function () {
+        const destBox = document.getElementById('whop-ad-destination-box');
+        const urlEl = document.getElementById('whop-ad-destination-url');
+        const copyBtn = document.getElementById('copy-whop-ad-destination-btn');
+        if (!urlEl) return;
+        const flowTypeEl = document.getElementById('flow_type');
+        const flowType = flowTypeEl ? flowTypeEl.value : '';
+        const showDest = isWhopTrafficSourceSelected() && (flowType === 'LP' || flowType === 'Split');
+        if (!showDest) {
+            if (destBox) destBox.style.display = 'none';
+            return;
+        }
+        if (destBox) destBox.style.display = 'block';
+        let lpUrl = '';
+        const container = document.getElementById('lp_items');
+        if (container) {
+            const rows = Array.from(container.querySelectorAll('div[style*="grid-template-columns"]'));
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.style.display === 'none') continue;
+                const checkbox = row.querySelector('input[type="checkbox"]');
+                const select = row.querySelector('select[name="lp_id[]"]');
+                if (!select || !select.value) continue;
+                if (checkbox && !checkbox.checked) continue;
+                const opt = select.options[select.selectedIndex];
+                lpUrl = opt ? (opt.getAttribute('data-lp-url') || '') : '';
+                break;
+            }
+        }
+        if (lpUrl) {
+            urlEl.textContent = lpUrl;
+            if (copyBtn) copyBtn.disabled = false;
+        } else {
+            urlEl.textContent = 'Select a landing page above';
+            if (copyBtn) copyBtn.disabled = true;
+        }
+    };
+
+    window.copyWhopAdDestination = function () {
+        const urlEl = document.getElementById('whop-ad-destination-url');
+        const button = document.getElementById('copy-whop-ad-destination-btn');
+        if (!urlEl) return;
+        const url = (urlEl.textContent || '').trim();
+        if (!url || url === 'Select a landing page above') return;
+        const originalText = button ? button.innerHTML : '';
+        const done = function () {
+            if (!button) return;
+            button.innerHTML = '✓ Copied!';
+            setTimeout(function () { button.innerHTML = originalText; }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(done).catch(function () {
+                const ta = document.createElement('textarea');
+                ta.value = url;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                done();
+            });
+        } else {
+            done();
+        }
+    };
+
+    window.copyWhopSnippet = function (elementId, button) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        const text = el.textContent || '';
+        const originalText = button ? button.innerHTML : '';
+        const done = function () {
+            if (!button) return;
+            button.innerHTML = '✓ Copied!';
+            setTimeout(function () { button.innerHTML = originalText; }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done).catch(function () {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                done();
+            });
+        } else {
+            done();
         }
     };
 
@@ -345,6 +690,8 @@
         }
         toggleFacebookIntegration();
         toggleGoogleAdsIntegration();
+        toggleHoneycombBindings();
+        syncWhopWizardUi();
     };
 
     function setRotationControlLocked(select, weightInput, isEnabled) {
@@ -405,6 +752,11 @@
     };
 
     window.handleLPEnabledChange = function (idx, on) {
+        if (isWhopTrafficSourceSelected()) {
+            syncWhopLpRotationLimits(true);
+            updateWhopAdDestination();
+            return;
+        }
         const h = document.getElementById('lp_enabled_hidden_' + idx);
         if (h) h.value = on ? '1' : '0';
         const w = document.getElementById('lp_weight_' + idx);
@@ -414,6 +766,7 @@
             on
         );
         if (w && !on) w.value = '0';
+        updateWhopAdDestination();
     };
 
     window.equalizeOfferWeights = function () {
@@ -433,6 +786,7 @@
     };
 
     window.equalizeLPWeights = function () {
+        if (isWhopTrafficSourceSelected()) return;
         const c = document.getElementById('lp_items');
         const all = c.querySelectorAll('div[style*="grid-template-columns"]');
         const enabled = Array.prototype.filter.call(all, function (row) {
@@ -478,6 +832,10 @@
     };
 
     window.addLPItem = function () {
+        if (isWhopTrafficSourceSelected()) {
+            alert('Whop Ads campaigns allow only one landing page (the ad destination).');
+            return;
+        }
         const c = document.getElementById('lp_items');
         const rows = c.querySelectorAll('div[style*="grid-template-columns"]');
         if (!rows.length) return;
@@ -799,6 +1157,7 @@
         toggleTrafficSourceSelector();
         initializeDisabledStates();
         updateFlowFields();
+        syncWhopWizardUi();
         const tsSelect = document.getElementById('traffic_source_id');
         if (tsSelect) {
             tsSelect.addEventListener('change', function () {

@@ -40,13 +40,30 @@ class GeoLocatorAdapter
     public function getGeoData(): array
     {
         $record = $this->resolver->resolve($this->ip);
-        
-        return [
+
+        $out = [
             'country' => $record->country !== 'N/A' ? $record->country : null,
             'region' => $record->region !== 'N/A' ? $record->region : null,
             'city' => $record->city !== 'N/A' ? $record->city : null,
             'postal' => $record->postal !== 'N/A' ? $record->postal : null,
+            'isp' => null,
+            'connection_type' => null,
         ];
+
+        // ASN is a separate optional MMDB — fill isp / connection heuristic when available
+        try {
+            $asn = AsnLookup::instance()->lookup($this->ip);
+            if (!empty($asn['isp'])) {
+                $out['isp'] = $asn['isp'];
+            }
+            if (!empty($asn['connection_type'])) {
+                $out['connection_type'] = $asn['connection_type'];
+            }
+        } catch (\Throwable $e) {
+            // Non-fatal
+        }
+
+        return $out;
     }
 
     /**

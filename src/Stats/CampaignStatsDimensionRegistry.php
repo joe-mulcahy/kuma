@@ -25,6 +25,9 @@ final class CampaignStatsDimensionRegistry
         'offer' => ['key' => 'offer', 'label' => 'Offer', 'group' => 'core'],
         'landing' => ['key' => 'landing', 'label' => 'Landing Page', 'group' => 'core'],
         'date' => ['key' => 'date', 'label' => 'Date', 'group' => 'core'],
+        'hour' => ['key' => 'hour', 'label' => 'Hour', 'group' => 'core'],
+        'week' => ['key' => 'week', 'label' => 'Week', 'group' => 'core'],
+        'day_of_week' => ['key' => 'day_of_week', 'label' => 'Day of week', 'group' => 'core'],
     ];
 
     /** @var array<string, array{key: string, label: string, group: string}> */
@@ -40,6 +43,8 @@ final class CampaignStatsDimensionRegistry
         'browser' => ['key' => 'browser', 'label' => 'Browser', 'group' => 'tracker'],
         'browser_version' => ['key' => 'browser_version', 'label' => 'Browser Version', 'group' => 'tracker'],
         'isp' => ['key' => 'isp', 'label' => 'ISP', 'group' => 'tracker'],
+        'connection_type' => ['key' => 'connection_type', 'label' => 'Connection Type', 'group' => 'tracker'],
+        'language' => ['key' => 'language', 'label' => 'Browser Language', 'group' => 'tracker'],
         'ip' => ['key' => 'ip', 'label' => 'IP Address', 'group' => 'tracker'],
     ];
 
@@ -149,9 +154,10 @@ final class CampaignStatsDimensionRegistry
             if (isset($seen[$key])) {
                 continue;
             }
-            // No click-column fallback (e.g. isp): if a namespaced TS token already
-            // covers this param, skip the tracker entry so we don't show two dims
-            // that resolve to the same JSON path.
+            // If a TS token was namespaced (ts:isp) because it collides with a
+            // tracker column, still show the tracker dim — they are different sources.
+            // Only skip a tracker entry when there is NO click column and ts:key
+            // already covers the same JSON token path.
             $hasColumn = isset(CampaignStatsExpressions::BUILTIN_COLUMN_MAP[$key]);
             $tsKey = CampaignStatsExpressions::TS_TOKEN_PREFIX . $key;
             if (!$hasColumn && isset($seen[$tsKey])) {
@@ -181,7 +187,7 @@ final class CampaignStatsDimensionRegistry
     }
 
     /** @var list<string> */
-    private const NON_FILTER_KEYS = ['offer', 'landing', 'date'];
+    private const NON_FILTER_KEYS = ['offer', 'landing', 'date', 'hour', 'week', 'day_of_week'];
 
     /**
      * Dimensions usable as advanced token/value filters (excludes offer, landing, date).

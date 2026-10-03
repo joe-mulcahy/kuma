@@ -1,0 +1,6 @@
+-- Migration 091: ISP, connection type, and browser language on clicks
+-- Enables tracker breakdowns for GeoIP ASN ISP, connection type, and Accept-Language.
+--
+-- IMPLEMENTATION: Executed in PHP (AddClicksIspConnectionLanguage) so re-runs are idempotent
+-- when columns/indexes already exist from a partial prior apply.
+-- See src/Database/Migrations/AddClicksIspConnectionLanguage.php

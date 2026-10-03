@@ -6,7 +6,8 @@
  * from Facebook Insights API and store it in hourly cost tables.
  * 
  * Usage: php scripts/fb_cost_updater.php
- * Cron: 0 * * * * /usr/bin/php /path/to/scripts/fb_cost_updater.php >> /var/log/fb_cost_updater.log 2>&1
+ * Cron (legacy, still valid): 0 * * * * /usr/bin/php /path/to/scripts/fb_cost_updater.php >> /var/log/fb_cost_updater.log 2>&1
+ * Recommended (FB + Google + Honeycomb): scripts/kuma-traffic-api-cron.php
  */
 
 declare(strict_types=1);
@@ -23,6 +24,7 @@ use SimpleKuma\Facebook\FacebookApiCallTracker;
 use SimpleKuma\Entity\FacebookAdsetCampaignMap;
 use SimpleKuma\Http\ProxyHandler;
 use SimpleKuma\Logger;
+use SimpleKuma\Cron\TrafficApiCronHooks;
 
 // CRITICAL: Add error handling at the very top to catch any fatal errors
 error_reporting(E_ALL);
@@ -68,6 +70,10 @@ $logger->logDetail("=== Facebook Cost Updater Cron Started ===", [
         'memory_limit' => ini_get('memory_limit'),
         'run_started_at' => $runStartedAt,
     ]);
+
+    if (!TrafficApiCronHooks::boot($db, $logger, 'fb_cost')) {
+        exit(0);
+    }
 } catch (\Throwable $e) {
     // Catch any fatal errors during initialization
     error_log("Facebook Cost Updater: Fatal error during initialization: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
@@ -580,7 +586,7 @@ foreach ($adAccountIds as $adAccountInternalId) {
     ]);
     
     // SPEND-ONLY FIX: Do NOT skip when adsetLookup is empty. We still call the account-level API
-    // and merge in adsets with spend from the API response, so spend-only adsets (e.g. gutters with 0 clicks)
+    // and merge in adsets with spend from the API response, so spend-only adsets (0 clicks)
     // get their cost written to adset_hourly_costs and appear in the dashboard total.
     
         // Process current hour and backfill any missed hours for today only
