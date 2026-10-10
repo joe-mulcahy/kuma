@@ -186,7 +186,7 @@ class InstallerController
         }
 
         $httpsWarning = !InstallerLock::isRequestHttps() && !InstallerLock::isLocalHost()
-            ? 'You are not using HTTPS. Use https:// in your browser URL before installing — login and sessions require SSL.'
+            ? 'You are not using HTTPS. Use https:// in your browser URL before installing — production login and sessions require SSL. (Localhost XAMPP may use http://.)'
             : null;
 
         $this->renderView('requirements', [

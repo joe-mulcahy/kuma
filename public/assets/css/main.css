@@ -729,6 +729,8 @@ h6 { font-size: var(--font-size-sm); }
     color: #64748b;
 }
 
+/* Campaign editor sectioned form → public/assets/css/campaign-form.css (cache-busted link in layout) */
+
 /* Token Helper Box & Buttons (Offers & Settings Integrations) */
 .token-selector-box {
     margin-bottom: 12px;

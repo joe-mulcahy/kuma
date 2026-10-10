@@ -38,6 +38,7 @@ class TrafficSourceCostStatus
         'TikTok',
         'Zeropark',
         'Taboola',
+        'Whop Ads',
         'Rumble',
         'RollerAds',
         'RichAds',
@@ -47,12 +48,12 @@ class TrafficSourceCostStatus
 
     public static function getTier(array $ts): string
     {
-        if (self::isVariablesOnlyPendingCostApi($ts)) {
-            return self::TIER_VARIABLES_ONLY;
-        }
-
         if (self::hasLiveCostApi($ts)) {
             return self::TIER_LIVE_API;
+        }
+
+        if (self::isVariablesOnlyPendingCostApi($ts)) {
+            return self::TIER_VARIABLES_ONLY;
         }
 
         $costMethod = $ts['cost_tracking_method'] ?? 'manual_token';
@@ -68,6 +69,12 @@ class TrafficSourceCostStatus
     public static function hasLiveCostApi(array $ts): bool
     {
         $name = strtolower($ts['name'] ?? '');
+        $providerKey = trim((string) ($ts['provider_key'] ?? ''));
+
+        if ($providerKey !== '' && ($ts['cost_tracking_method'] ?? '') === 'integrated_api') {
+            // Honeycomb traffic-source addons (e.g. taboola) mark integrated_api + provider_key.
+            return true;
+        }
 
         if (strpos($name, 'facebook') !== false) {
             return true;
@@ -112,11 +119,21 @@ class TrafficSourceCostStatus
     public static function getHelpNote(array $ts): ?string
     {
         return match (self::getTier($ts)) {
-            self::TIER_LIVE_API => 'Cost syncs via the built-in Facebook or Google Ads integration (Settings → Integrations).',
+            self::TIER_LIVE_API => self::liveApiHelpNote($ts),
             self::TIER_MANUAL_URL => 'Cost is read from the cost parameter in your tracking URL when the network sends it.',
             self::TIER_VARIABLES_ONLY => 'Click and conversion tracking work with these tokens. Automatic API cost sync for this network is not built into Kuma yet — cost in reports may stay at zero until that integration ships.',
             default => null,
         };
+    }
+
+    private static function liveApiHelpNote(array $ts): string
+    {
+        $providerKey = trim((string) ($ts['provider_key'] ?? ''));
+        if ($providerKey !== '' && ($ts['cost_tracking_method'] ?? '') === 'integrated_api') {
+            return 'Cost syncs hourly via the Honeycomb addon for this traffic source (see Honeycomb → Keep ad spend up to date).';
+        }
+
+        return 'Cost syncs via the built-in Facebook or Google Ads integration (Settings → Integrations).';
     }
 
     public static function renderBadge(array $ts, string $extraStyle = ''): string

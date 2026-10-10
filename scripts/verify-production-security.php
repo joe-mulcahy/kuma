@@ -125,27 +125,29 @@ if (file_exists($configExample)) {
     $warnings[] = "config/config.php.example template not found";
 }
 
-// Check 7: No excluded ad account IDs in settings.php (personal data)
+// Check 7: No hardcoded personal Meta ad-account exclude lists in settings.php
 echo "7. Checking for personal data in settings.php...\n";
 $settingsPath = __DIR__ . '/../views/settings.php';
 if (file_exists($settingsPath)) {
     $settingsContent = file_get_contents($settingsPath);
-    if (preg_match('/\$\s*excludedAdAccountIds\s*=\s*\[\s*[\'"]\d+[\'"]/', $settingsContent)) {
-        $errors[] = "settings.php contains hardcoded excluded ad account IDs (personal data) - remove before release";
+    // Catch leftover hardcoded numeric exclude arrays (never ship personal Meta account IDs)
+    if (preg_match('/\$\s*\w*[Ee]xclude\w*AdAccount\w*\s*=\s*\[\s*[\'"]\d{10,}[\'"]/', $settingsContent)
+        || preg_match('/TEMPORARY:\s*List of ad account IDs to exclude/', $settingsContent)) {
+        $errors[] = "settings.php contains hardcoded Meta ad account exclude IDs (personal data) - remove before release";
     } else {
-        $success[] = "settings.php has no hardcoded excluded ad account IDs";
+        $success[] = "settings.php has no hardcoded Meta ad account exclude lists";
     }
 } else {
     $warnings[] = "views/settings.php not found";
 }
 
-// Check 8: remove-excluded-ad-accounts.php should not exist
-echo "8. Checking for remove-excluded-ad-accounts.php...\n";
+// Check 8: one-off personal cleanup scripts must not ship
+echo "8. Checking for personal Meta cleanup scripts...\n";
 $removeScriptPath = __DIR__ . '/../public/remove-excluded-ad-accounts.php';
 if (file_exists($removeScriptPath)) {
     $errors[] = "public/remove-excluded-ad-accounts.php exists - DELETE before release (exposes personal data)";
 } else {
-    $success[] = "remove-excluded-ad-accounts.php properly removed";
+    $success[] = "personal Meta cleanup scripts not present";
 }
 
 // Check 9: display_errors should be off in index.php

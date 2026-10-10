@@ -632,7 +632,7 @@ try {
             echo "<h2 style='color: #dcdcaa; margin-top: 0; border-bottom: 2px solid #dcdcaa; padding-bottom: 10px;'>🔧 Cost Troubleshooting – Per-Campaign & Adset Detail</h2>";
             echo "<p style='color: #858585; font-size: 12px; margin-bottom: 15px;'>Use this to see which ad account each campaign is linked to (campaign setup), which adsets belong to which campaigns (from clicks), which cost rows feed each campaign for &quot;today&quot;, and which adsets have cost but no clicks (spend-only / unattributed).</p>";
             
-            // 0. Campaign → Ad account (from campaign setup) – so we can verify e.g. Solar is linked to Spicy #2
+            // 0. Campaign → Ad account (from campaign setup) 
             $campaignAdAccountQuery = $db->query("
                 SELECT 
                     cp.id AS campaign_id,
@@ -668,7 +668,7 @@ try {
             
             echo "<div style='margin-bottom: 25px;'>";
             echo "<h3 style='color: #4ec9b0; margin-top: 0;'>0. Campaign → Ad account (from campaign setup)</h3>";
-            echo "<p style='color: #858585; font-size: 11px;'>Shows which Facebook ad account each campaign is linked to. Use this to verify e.g. Solar is linked to Spicy #2.</p>";
+            echo "<p style='color: #858585; font-size: 11px;'>Shows which Facebook ad account each campaign is linked to. Use this to verify each campaign is linked to the expected ad account.</p>";
             if (!empty($campaignAdAccountList)) {
                 echo "<div style='max-height: 300px; overflow-y: auto;'>";
                 echo "<table style='width: 100%; border-collapse: collapse; color: #d4d4d4; font-size: 11px;'>";
@@ -1707,194 +1707,6 @@ try {
         }
         
         echo "</div>"; // End cost breakdown section
-        
-        // Gutters Campaign Cost Matching Diagnostic
-        echo "<div style='background: #1e1e1e; padding: 15px; border-radius: 4px; margin-top: 20px; border: 2px solid #4ec9b0;'>";
-        echo "<h3 style='color: #4ec9b0; margin-top: 0;'>🔍 Gutters Campaign Cost Matching Diagnostic</h3>";
-        
-        $guttersAdsetId = '120233993018390074';
-        $guttersCosts = [];
-        $guttersClicks = [];
-        $guttersCampaigns = [];
-        
-        try {
-            // Query costs for gutters adset
-            $guttersCostQuery = $db->prepare("
-            SELECT 
-                date,
-                hour,
-                spend,
-                delta_spend,
-                last_synced
-            FROM adset_hourly_costs
-            WHERE adset_id = ?
-                AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') >= ?
-                AND CONCAT(date, ' ', LPAD(hour, 2, '0'), ':00:00') <= ?
-            ORDER BY date DESC, hour DESC
-        ");
-        $guttersCostQuery->bind_param('sss', $guttersAdsetId, $utcDateFrom, $utcDateTo);
-        $guttersCostQuery->execute();
-        $guttersCosts = $guttersCostQuery->get_result()->fetch_all(MYSQLI_ASSOC);
-        
-        // Query clicks for gutters adset
-        $guttersClicksQuery = $db->prepare("
-            SELECT 
-                cl.id as click_id,
-                cl.campaign_id,
-                JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.adset_id')) as adset_id,
-                JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.ad_id')) as ad_id,
-                cl.ts,
-                DATE(cl.ts) as click_date,
-                HOUR(cl.ts) as click_hour,
-                cp.name as campaign_name
-            FROM clicks cl
-            LEFT JOIN campaigns cp ON cl.campaign_id = cp.id
-            WHERE JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.adset_id')) = ?
-                AND cl.ts >= ?
-                AND cl.ts <= ?
-            ORDER BY cl.ts DESC
-            LIMIT 50
-        ");
-        $guttersClicksQuery->bind_param('sss', $guttersAdsetId, $utcDateFrom, $utcDateTo);
-        $guttersClicksQuery->execute();
-        $guttersClicks = $guttersClicksQuery->get_result()->fetch_all(MYSQLI_ASSOC);
-        
-        // Find campaigns associated with this adset
-        $guttersCampaignsQuery = $db->prepare("
-            SELECT DISTINCT
-                cl.campaign_id,
-                cp.name as campaign_name,
-                COUNT(DISTINCT cl.id) as click_count
-            FROM clicks cl
-            LEFT JOIN campaigns cp ON cl.campaign_id = cp.id
-            WHERE JSON_UNQUOTE(JSON_EXTRACT(cl.extra_json, '$.traffic_source_tokens.adset_id')) = ?
-                AND cl.ts >= ?
-                AND cl.ts <= ?
-            GROUP BY cl.campaign_id, cp.name
-        ");
-            $guttersCampaignsQuery->bind_param('sss', $guttersAdsetId, $utcDateFrom, $utcDateTo);
-            $guttersCampaignsQuery->execute();
-            $guttersCampaigns = $guttersCampaignsQuery->get_result()->fetch_all(MYSQLI_ASSOC);
-        } catch (Exception $e) {
-            echo "<p style='color: #f48771;'>❌ Error querying gutters diagnostic data: " . htmlspecialchars($e->getMessage()) . "</p>";
-        }
-        
-        echo "<p style='color: #dcdcaa;'><strong>Adset ID:</strong> " . htmlspecialchars($guttersAdsetId) . "</p>";
-        echo "<p style='color: #dcdcaa;'><strong>Date Range:</strong> " . htmlspecialchars($utcDateFrom) . " to " . htmlspecialchars($utcDateTo) . " (UTC)</p>";
-        
-        // Costs summary
-        $totalGuttersCost = 0.0;
-        $totalGuttersDelta = 0.0;
-        foreach ($guttersCosts as $cost) {
-            $totalGuttersCost += (float)$cost['spend'];
-            $totalGuttersDelta += (float)$cost['delta_spend'];
-        }
-        
-        echo "<div style='margin-top: 15px;'>";
-        echo "<h4 style='color: #4ec9b0;'>Cost Records:</h4>";
-        if (empty($guttersCosts)) {
-            echo "<p style='color: #f48771;'>❌ NO COST RECORDS found for this adset in the date range</p>";
-        } else {
-            echo "<p style='color: #4ec9b0;'>✅ Found " . count($guttersCosts) . " cost record(s)</p>";
-            echo "<p style='color: #dcdcaa;'><strong>Total Cumulative Spend:</strong> $" . number_format($totalGuttersCost, 2) . "</p>";
-            echo "<p style='color: #dcdcaa;'><strong>Total Delta Spend:</strong> $" . number_format($totalGuttersDelta, 2) . "</p>";
-            
-            echo "<table style='width: 100%; border-collapse: collapse; color: #d4d4d4; font-size: 12px; margin-top: 10px;'>";
-            echo "<tr style='background: #2d2d30;'><th style='padding: 6px; text-align: left; border-bottom: 1px solid #4ec9b0;'>Date</th><th style='padding: 6px; text-align: left; border-bottom: 1px solid #4ec9b0;'>Hour</th><th style='padding: 6px; text-align: right; border-bottom: 1px solid #4ec9b0;'>Cumulative</th><th style='padding: 6px; text-align: right; border-bottom: 1px solid #4ec9b0;'>Delta</th></tr>";
-            foreach ($guttersCosts as $cost) {
-                echo "<tr>";
-                echo "<td style='padding: 4px;'>" . htmlspecialchars($cost['date']) . "</td>";
-                echo "<td style='padding: 4px;'>" . htmlspecialchars($cost['hour']) . ":00</td>";
-                echo "<td style='padding: 4px; text-align: right; color: #4ec9b0;'>$" . number_format($cost['spend'], 2) . "</td>";
-                echo "<td style='padding: 4px; text-align: right; color: #dcdcaa;'>$" . number_format($cost['delta_spend'], 2) . "</td>";
-                echo "</tr>";
-            }
-            echo "</table>";
-        }
-        echo "</div>";
-        
-        // Clicks summary
-        echo "<div style='margin-top: 15px;'>";
-        echo "<h4 style='color: #4ec9b0;'>Click Records:</h4>";
-        if (empty($guttersClicks)) {
-            echo "<p style='color: #f48771;'>❌ NO CLICKS found for this adset in the date range</p>";
-        } else {
-            echo "<p style='color: #4ec9b0;'>✅ Found " . count($guttersClicks) . " click(s) (showing first 50)</p>";
-        }
-        echo "</div>";
-        
-        // Campaigns summary
-        echo "<div style='margin-top: 15px;'>";
-        echo "<h4 style='color: #4ec9b0;'>Campaigns Using This Adset:</h4>";
-        if (empty($guttersCampaigns)) {
-            echo "<p style='color: #f48771;'>❌ NO CAMPAIGNS found using this adset</p>";
-        } else {
-            echo "<table style='width: 100%; border-collapse: collapse; color: #d4d4d4; font-size: 12px; margin-top: 10px;'>";
-            echo "<tr style='background: #2d2d30;'><th style='padding: 6px; text-align: left; border-bottom: 1px solid #4ec9b0;'>Campaign ID</th><th style='padding: 6px; text-align: left; border-bottom: 1px solid #4ec9b0;'>Campaign Name</th><th style='padding: 6px; text-align: right; border-bottom: 1px solid #4ec9b0;'>Click Count</th></tr>";
-            foreach ($guttersCampaigns as $camp) {
-                $isGutters = stripos($camp['campaign_name'] ?? '', 'gutter') !== false;
-                $rowColor = $isGutters ? 'color: #4ec9b0;' : 'color: #f48771;';
-                echo "<tr>";
-                echo "<td style='padding: 4px; $rowColor'>" . htmlspecialchars($camp['campaign_id']) . "</td>";
-                echo "<td style='padding: 4px; $rowColor'>" . htmlspecialchars($camp['campaign_name'] ?? 'N/A') . "</td>";
-                echo "<td style='padding: 4px; text-align: right; $rowColor'>" . number_format($camp['click_count']) . "</td>";
-                echo "</tr>";
-            }
-            echo "</table>";
-        }
-        echo "</div>";
-        
-        // Matching analysis
-        echo "<div style='margin-top: 15px; padding: 10px; background: #2d2d30; border-radius: 4px;'>";
-        echo "<h4 style='color: #4ec9b0;'>Cost Matching Analysis:</h4>";
-        
-        if (empty($guttersCosts) && empty($guttersClicks)) {
-            echo "<p style='color: #858585;'>No costs or clicks found - adset may not be active in this date range.</p>";
-        } elseif (empty($guttersCosts) && !empty($guttersClicks)) {
-            echo "<p style='color: #f48771;'>❌ <strong>ISSUE:</strong> Clicks exist but NO costs found. This explains why costs don't show in Kuma.</p>";
-            echo "<p style='color: #dcdcaa;'>Possible causes:</p>";
-            echo "<ul style='color: #dcdcaa;'>";
-            echo "<li>Costs were not fetched from Meta API for this adset</li>";
-            echo "<li>Costs were fetched but not saved to database</li>";
-            echo "<li>Date/hour mismatch between clicks and costs</li>";
-            echo "</ul>";
-        } elseif (!empty($guttersCosts) && empty($guttersClicks)) {
-            echo "<p style='color: #f48771;'>⚠️ <strong>WARNING:</strong> Costs exist but NO clicks found. Costs may not match to any campaign.</p>";
-        } else {
-            // Check if costs match clicks by date/hour
-            $matchedCosts = 0;
-            $unmatchedCosts = 0;
-            foreach ($guttersCosts as $cost) {
-                $costDateTime = $cost['date'] . ' ' . str_pad($cost['hour'], 2, '0', STR_PAD_LEFT) . ':00:00';
-                $matched = false;
-                foreach ($guttersClicks as $click) {
-                    $clickDateTime = $click['click_date'] . ' ' . str_pad($click['click_hour'], 2, '0', STR_PAD_LEFT) . ':00:00';
-                    if ($costDateTime === $clickDateTime) {
-                        $matched = true;
-                        break;
-                    }
-                }
-                if ($matched) {
-                    $matchedCosts++;
-                } else {
-                    $unmatchedCosts++;
-                }
-            }
-            
-            if ($unmatchedCosts > 0) {
-                echo "<p style='color: #f48771;'>⚠️ <strong>WARNING:</strong> $unmatchedCosts cost record(s) don't match any clicks by date/hour.</p>";
-            } else {
-                echo "<p style='color: #4ec9b0;'>✅ All cost records match clicks by date/hour.</p>";
-            }
-            
-            // Check campaign attribution
-            if (count($guttersCampaigns) > 1) {
-                echo "<p style='color: #f48771;'>⚠️ <strong>WARNING:</strong> This adset is used by " . count($guttersCampaigns) . " different campaign(s). Costs may be shared across campaigns.</p>";
-            }
-        }
-        
-        echo "</div>";
-        echo "</div>"; // End gutters diagnostic section
         
         // Account-Level API Diagnostic
         echo "<div style='background: #1e1e1e; padding: 15px; border-radius: 4px; margin-top: 20px; border: 2px solid #4ec9b0;'>";

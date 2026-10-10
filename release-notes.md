@@ -1,4 +1,147 @@
-# Simple Kuma Tracker Version 1.1.5.21
+# Simple Kuma Tracker Version 1.1.5.27
+
+## Changes in 1.1.5.27
+
+### Hotfix: campaign editor layout (cached CSS)
+- Sectioned campaign edit/create form styles moved to dedicated `campaign-form.css` and linked from the global layout
+- All layout CSS and page-specific stylesheets now use `filemtime` cache-busting (`sk_css_href`) so CDN/browser caches cannot keep a pre-refactor `main.css` after update
+- Packager requires `campaign-form.css`, form partials, and cache-bust wiring so this cannot ship unstyled again
+
+# Simple Kuma Tracker Version 1.1.5.26
+
+## Changes in 1.1.5.26
+
+### Campaign wizard ↔ editor parity (Ringba + Edge)
+- Shared `public/assets/js/campaign-ringba.js` so Ringba API campaign picker / Refresh works on create wizard and classic editor
+- Ringba LP copy panel available on wizard Traffic step (same partial as Tracking on edit)
+- Create wizard: **Edge redirect** checkbox; review summary includes Honeycomb bindings, Edge, and Meta CAPI
+- Meta CAPI options in wizard show pixel id (same as editor)
+
+### Honeycomb / packaging hygiene
+- Packager requires migrations **094** / **095**, Ringba public endpoints, and shared Ringba assets
+- Empty secured `honeycomb/addons/` (+ `.htaccess`) included in the production zip
+- `upgrade-manifest.json` aligned to this release; release-notes Migrations footer through **095**
+
+### Ringba Honeycomb addon (catalog)
+- Ringba v1.1.1 published to `kumatrk/honeycomb-addons` — Import from **System → Honeycomb** (or local install script)
+
+# Simple Kuma Tracker Version 1.1.5.25
+
+## Changes in 1.1.5.25
+
+### Honeycomb: secure addon update checks (like core)
+- Installed Honeycomb addons are compared to the official catalog (`kumatrk/honeycomb-addons`); outdated addons show an admin banner and alerts on **System → Honeycomb**
+- Per-addon **Update** uses the same verified path as Import: allowlisted HTTPS, mandatory catalog SHA-256, safe zip extract, slug/`min_kuma` checks — no user-supplied zip URLs, no silent auto-apply, no remote PHP on check
+- Updates preserve enabled/disabled status and leave credentials / campaign bindings in place; downgrades are rejected
+- Background check API: `public/api-check-honeycomb-updates.php` (session-auth, cache-first — same pattern as core `api-check-updates.php`)
+- Packaging: new public API + `AddonUpdateChecker` included in the production zip allowlist / required set
+
+### Campaigns: redirect when paused or archived
+- New campaign setting **When paused or archived** (editor Campaign section + create wizard Basics, with review summary)
+- **Off** — tracking link still returns not found (previous behavior)
+- **Redirect to another campaign** — 302 to that campaign’s tracking link; inbound query tokens are forwarded; a normal click is recorded on the **target** campaign (not the paused/archived one)
+- **Redirect to a custom URL** — 302 to an http(s) URL (no Kuma click)
+- Target campaign must be **active**; self-targeting is blocked; deleted campaigns are unchanged (no soft-delete in this release)
+- Edge Redirect falls through to origin for inactive campaigns, so origin applies the redirect
+- Migration: `095_add_campaign_inactive_redirect.sql`
+
+### Settings: remove duplicate Honeycomb nav item
+- Settings sidebar no longer lists **Honeycomb** (it only linked to the main **System → Honeycomb** page)
+
+### Honeycomb: Ringba utility addon (pay-per-call)
+- New addon source: `honeycomb-addons/addons/ringba` (v1.1.1) — Import from **System → Honeycomb** catalog (`kumatrk/honeycomb-addons`), or `php scripts/install-local-honeycomb-addon.php honeycomb-addons/addons/ringba`
+- **Type `utility`:** works with any traffic source (Whop, Meta, Propeller, etc.) — not a traffic-source cost sync
+- Campaign **Honeycomb** section: enable Ringba, paste or pick call-tracking / campaign id (`CA…` — used as `//b-js.ringba.com/CA….js`), optional number-to-replace
+- **Ringba tag name for Kuma’s click id** (default `click_id`): label Ringba uses to store **Kuma’s** click id on the call for payout pixels — explicitly not Propeller/Meta/ad-network click ids (copy clarified so users don’t mix them up)
+- Optional **Ringba API** credentials (account ID + API access token, `Authorization: Token …`) with connection test on save; campaign dropdown + Refresh list via `public/api/honeycomb-ringba.php` (`status` / `campaigns` / `tags`); paste mode still works without API
+- Campaign **Tracking** (editor) and create wizard Traffic step: `#ringba-lp-codes-panel` copy script (`_rgba_tags` for Kuma’s click id + Ringba number-pool JS) when enabled; shared `public/assets/js/campaign-ringba.js` powers API campaign picker on both surfaces
+- Honeycomb Options: setup checklist + Connected / Converted / Payout pixel URLs → `postback.php` (`et=call_connected` / `call_converted` / `call_payout`)
+- Alias endpoint: `public/ringba-postback.php` (accepts clickid / call_id / call_revenue aliases → same `ConversionTracker` pipeline)
+- Core: `CampaignFieldsProvider::alwaysVisible()` + campaign-editor JS so utility panels are not gated by traffic-source `provider_key`
+- Packaging: `public/ringba-postback.php` and `public/api/honeycomb-ringba.php` added to production zip public PHP allowlist
+
+# Simple Kuma Tracker Version 1.1.5.24
+
+## Changes in 1.1.5.24
+
+### Campaign editor: sectioned Main Settings
+- Classic campaign edit/add **Main Settings** reorganized into collapsible sections (expanded by default): **Campaign**, **Tracking**, **Traffic Source Integration**, **Honeycomb**, **Postbacks & Conversion Delivery**
+- Neutral section chrome (no rainbow wizard steps); mobile stacks grids cleanly
+- Create wizard traffic step shares the same Honeycomb field renderer
+
+### Meta / Facebook integration layout
+- **Traffic Source Integration** splits Meta into peer columns: **Conversion reporting** (CAPI) and **Cost tracking** (ad account)
+- Meta campaign picker + Refresh sit full-width under cost tracking (dependent step, not crammed into one column)
+
+### Honeycomb: real `campaign_fields` hook
+- New `CampaignFieldsProvider` + `HoneycombKernel::addCampaignFieldsProvider()` so addons register campaign-editor UI
+- Core `GenericBindingCampaignFields` covers cost sync + conversion export; Whop / Taboola bootstraps register providers
+- Manifest `provides: campaign_fields` now gates the Honeycomb section; bindings still save via `campaign_addon_bindings` / `honeycomb_binding[{slug}]`
+
+# Simple Kuma Tracker Version 1.1.5.23
+
+## Changes in 1.1.5.23
+
+### Campaign Stats: Hour and Week breakdown dimensions
+- New Core dimensions **Hour** and **Week** in Breakdown (same **+ Add dimension** flow as Date — no new tab)
+- Nest with other dims (e.g. Offer → Hour, Ad → Hour) via presets
+- **Week** = ISO Monday-start calendar week (label = week-start date), fast path from `clicks_daily_summary`
+- **Day of week** = Monday…Sunday (aggregate across the range), fast path from `clicks_daily_summary`
+- **Hour** L0 uses the lean covering-index path (same family as Chart hourly)
+- New pre-agg table `clicks_stats_by_token_hourly` (migration `094`) for token ↔ hour nests — on-write with clicks/conversions, never age-purged
+- Rebuild: `scripts/rebuild-token-daily-summaries.php` now rebuilds daily + hourly token tables together
+
+# Simple Kuma Tracker Version 1.1.5.22
+
+## Changes in 1.1.5.22
+
+### Honeycomb: installable traffic & conversion addons
+- New **System → Honeycomb** page: browse the fixed catalog (`kumatrk/honeycomb-addons`), search/filter by type, import verified zips, enable/disable without uninstalling, and remove addons
+- Addons live outside the Kuma zip under `honeycomb/addons/` on each server — core updates and addon updates stay independent
+- Safe install path: HTTPS GitHub host allowlist, required SHA-256, zip path/symlink/size limits, extension allowlist, blocked server config files
+- Campaign edit / create wizard: Honeycomb bindings driven by addon `provides` — conversion export and remote cost IDs can appear together
+- Hourly spend for Honeycomb networks lands in `honeycomb_campaign_hourly_costs` and overlays campaign KPI / chart totals via `HoneycombCostAggregator` (**summary-first** — no per-click cost joins)
+- Recommended one cron for Facebook cost, Google Ads cost, and Honeycomb: `scripts/kuma-traffic-api-cron.php` (Honeycomb-only fallback: `scripts/honeycomb-cron.php`)
+- Migrations: `090_honeycomb_kernel`, `092_honeycomb_runtime`, `093_honeycomb_conversion_exports`
+- **Taboola Cost API** and **Whop Ads** ship from the Honeycomb catalog (not inside this zip) — import from Honeycomb after upgrade
+
+### Whop Ads (via Honeycomb catalog)
+- Template traffic source with Whop click tokens (`wacid` / `wasid` / `waid` / Meta UTMs)
+- Single landing page when the campaign uses a Whop traffic source (Whop Pixel + Kuma CTA handoff)
+- Conversion export to Whop Events API (default `lead`); click capture of `_wuid` + original landing URL
+- Campaign-level spend sync from Whop Ad Reports (`ad_campaign:stats:read`) when a Whop ad campaign ID is bound
+- Cost badge: Honeycomb `integrated_api` sources show Live API cost (not “variables only”)
+
+### Taboola Cost API (via Honeycomb catalog)
+- Backstage client-credentials spend sync into the same Honeycomb hourly cost table and stats overlay
+
+### Server Status: VPS CPU / RAM / disk monitor
+- New **System → Server Status** page: live disk meters, best-effort CPU load pressure + RAM (Linux `/proc`), MySQL click-table sizes, and Run archive & retention now
+- In-app warning banner when CPU / RAM / disk cross thresholds (configurable on the page; no email)
+- Retention cron records host metrics alongside disk; raw purge still preserves report summaries
+- Theme-aware UI (readable in dark mode)
+
+### Tracker: ISP, connection type, and browser language
+- New click columns: `isp`, `connection_type`, `language` (migration `091_add_clicks_isp_connection_language.sql`)
+- Campaign Stats tracker breakdowns: **ISP**, **Connection Type**, **Browser Language**
+- **ISP** from redistributable **DB-IP ASN Lite** (`geoip/DBIP-ASN-Lite.mmdb`, CC BY 4.0) — packaged in the customer zip
+- Do **not** ship MaxMind GeoLite2-ASN in the zip (license); private drop-in still works if present
+- **Connection type**: traffic-source tokens first, else ASN org heuristic → Cellular / Broadband / Corporate / Unknown
+- **Browser language**: primary Accept-Language tag on origin; edge ingest keeps worker `language`
+- Refresh ASN DB: `php scripts/download-geoip-databases.php --dbip-asn` (also in `--all`)
+- Historical clicks stay N/A until new traffic; Settings → GeoIP shows ASN/ISP status
+
+### Offer / LP rotation weights (edge UX)
+- Origin links apply new weights **immediately** after save
+- Edge (Cloudflare KV) can take **up to about a minute** after sync to use new weights worldwide
+- Campaign UI copy on Edge box + offer/LP rotation explains this
+
+### Packaging
+- Customer zip includes Honeycomb kernel + empty secured `honeycomb/` runtime (addons are catalog-installed, not bundled)
+- Required migrations include Honeycomb **090 / 092 / 093** and ISP **091**
+- Production crons allowlisted: `kuma-traffic-api-cron.php`, `honeycomb-cron.php`
+- **Installer:** migration **091** (ISP / connection / language) is idempotent in PHP — re-running after a partial apply no longer fails with `Duplicate column name 'isp'`
+- Custom postbacks skip empty network click ids (e.g. PropellerAds `visitor_id`) and do not retry HTTP 4xx
 
 ## Changes in 1.1.5.21
 
@@ -311,7 +454,7 @@
 
 ## Migrations
 
-Fresh installs should apply forward migrations **001 through 086** (exclude `rollback_*.sql`). Existing installs: run pending migrations after upgrade (includes **086** for the clicks covering stats index).
+Fresh installs should apply forward migrations **001 through 095** (exclude `rollback_*.sql`). Existing installs: run pending migrations after upgrade (includes **090–093** Honeycomb, **091** ISP/connection/language, **094** token-hourly stats, **095** inactive campaign redirect).
 
 ## License
 

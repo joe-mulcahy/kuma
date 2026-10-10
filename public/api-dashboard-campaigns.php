@@ -55,7 +55,9 @@ if ($permission && !$permission->hasPermission(Permission::PERM_DASHBOARD_VIEW)
 
 $currentUser = $auth->getCurrentUser();
 $userId = (int)($currentUser['id'] ?? 0);
-$userTimezone = ($currentUser && isset($currentUser['timezone'])) ? (string)$currentUser['timezone'] : 'UTC';
+$userTimezone = Formatter::normalizeTimezone(
+    ($currentUser && isset($currentUser['timezone'])) ? (string)$currentUser['timezone'] : 'UTC'
+);
 $auth->releaseSessionLock();
 
 if (connection_aborted()) {
@@ -63,29 +65,6 @@ if (connection_aborted()) {
 }
 
 $userCurrency = ($currentUser && isset($currentUser['currency'])) ? (string)$currentUser['currency'] : 'USD';
-
-$timezoneMap = [
-    'PT' => 'America/Los_Angeles',
-    'PST' => 'America/Los_Angeles',
-    'PDT' => 'America/Los_Angeles',
-    'ET' => 'America/New_York',
-    'EST' => 'America/New_York',
-    'EDT' => 'America/New_York',
-    'CT' => 'America/Chicago',
-    'CST' => 'America/Chicago',
-    'CDT' => 'America/Chicago',
-    'MT' => 'America/Denver',
-    'MST' => 'America/Denver',
-    'MDT' => 'America/Denver',
-];
-if (isset($timezoneMap[$userTimezone])) {
-    $userTimezone = $timezoneMap[$userTimezone];
-}
-try {
-    $userTimezone = (new DateTimeZone($userTimezone))->getName();
-} catch (Exception $e) {
-    $userTimezone = 'UTC';
-}
 
 @set_time_limit(60);
 

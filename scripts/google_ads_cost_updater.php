@@ -5,7 +5,8 @@
  * Fetches Google Ads campaign spend via GAQL and stores hourly snapshots.
  *
  * Usage: php scripts/google_ads_cost_updater.php
- * Cron: 0 * * * * /usr/bin/php /path/to/scripts/google_ads_cost_updater.php >> /var/log/google_ads_cost_updater.log 2>&1
+ * Cron (legacy, still valid): 0 * * * * /usr/bin/php /path/to/scripts/google_ads_cost_updater.php >> /var/log/google_ads_cost_updater.log 2>&1
+ * Recommended (FB + Google + Honeycomb): scripts/kuma-traffic-api-cron.php
  */
 
 declare(strict_types=1);
@@ -19,6 +20,7 @@ use SimpleKuma\GoogleAds\GoogleAdsClickExtractor;
 use SimpleKuma\GoogleAds\GoogleAdsInsightsClient;
 use SimpleKuma\GoogleAds\GoogleAdsApiCallTracker;
 use SimpleKuma\Logger;
+use SimpleKuma\Cron\TrafficApiCronHooks;
 
 error_reporting(E_ALL);
 ini_set('display_errors', '0');
@@ -43,6 +45,10 @@ $logger->logDetail('=== Google Ads Cost Updater Cron Started ===', [
     'hour' => date('H:i:s'),
     'timezone' => date_default_timezone_get(),
 ]);
+
+if (!TrafficApiCronHooks::boot($db, $logger, 'google_ads_cost')) {
+    exit(0);
+}
 
 $userTimezone = 'UTC';
 $userTimezoneQuery = $db->query('SELECT timezone FROM users LIMIT 1');

@@ -95,11 +95,18 @@ class ConfigWriter
         $dbName = $this->exportValue($dbConfig['name']);
         $dbUser = $this->exportValue($dbConfig['user']);
         $dbPassword = $this->exportValue($dbConfig['password']);
-        $baseUrl = $this->exportValue(WebPathResolver::normalizeBaseUrl($siteConfig['base_url']));
+        $normalizedBaseUrl = WebPathResolver::normalizeBaseUrl($siteConfig['base_url']);
+        $baseUrl = $this->exportValue($normalizedBaseUrl);
         $publicPrefix = $this->exportValue(
             $siteConfig['public_path_suffix'] ?? WebPathResolver::getPublicPathSuffix()
         );
         $appKeyExport = $this->exportValue($appKey);
+        $sessionCookieSecure = str_starts_with(strtolower($normalizedBaseUrl), 'https://')
+            ? 'true'
+            : 'false';
+        $sessionSecureComment = $sessionCookieSecure === 'true'
+            ? 'HTTPS — secure session cookies'
+            : 'false for HTTP (local/dev); true when BASE_URL is https';
 
         return <<<PHP
 <?php
@@ -141,10 +148,13 @@ define('CLICK_PATH_PREFIX', 'go');
 // Timezone Configuration
 define('APP_TIMEZONE', 'UTC');
 
+// Public documentation (hosted on simplekuma.com, not inside the install zip)
+define('USER_GUIDE_URL', 'https://simplekuma.com/user-guide/');
+
 // Session Configuration
 define('SESSION_LIFETIME', 7200); // 2 hours
 define('SESSION_COOKIE_HTTPONLY', true);
-define('SESSION_COOKIE_SECURE', true); // HTTPS required — login will not work over plain HTTP
+define('SESSION_COOKIE_SECURE', {$sessionCookieSecure}); // {$sessionSecureComment}
 
 // Security Configuration (threads must stay 1 on libsodium PHP builds)
 define('HASH_ALGO', defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT);

@@ -165,6 +165,9 @@ $allowedPages = [
     'short-links',
     'postback-urls',
     'kuma-api',
+    'honeycomb',
+    'honeycomb-addon',
+    'server-status',
     'settings',
     'campaign-stats',
     'campaign-stats-legacy',
@@ -193,6 +196,9 @@ $pagePermissions = [
     'short-links' => Permission::PERM_CAMPAIGN_VIEW, // Same as campaigns
     'postback-urls' => Permission::PERM_POSTBACK_VIEW,
     'kuma-api' => Permission::PERM_SETTINGS_VIEW,
+    'honeycomb' => Permission::PERM_SETTINGS_VIEW,
+    'honeycomb-addon' => Permission::PERM_SETTINGS_VIEW,
+    'server-status' => Permission::PERM_SETTINGS_VIEW,
     'settings' => Permission::PERM_SETTINGS_VIEW,
     'campaign-stats' => Permission::PERM_STATS_VIEW,
     'campaign-stats-legacy' => Permission::PERM_STATS_VIEW,
@@ -252,6 +258,9 @@ $pageTitles = [
     'short-links' => 'Short Links',
     'postback-urls' => 'Postback URLs',
     'kuma-api' => 'Kuma API',
+    'honeycomb' => 'Honeycomb',
+    'honeycomb-addon' => 'Honeycomb Addon',
+    'server-status' => 'Server Status',
     'settings' => 'Settings',
     'campaign-stats' => 'Campaign Stats',
     'billing' => 'Billing Reports',
@@ -444,7 +453,9 @@ if ($page === 'conversions' && isset($_GET['export']) && $_GET['export'] === 'cs
 }
 
 // Get current user for timezone/currency (already defined above)
-$userTimezone = ($currentUser && isset($currentUser['timezone'])) ? $currentUser['timezone'] : 'UTC';
+$userTimezone = \SimpleKuma\Utils\Formatter::normalizeTimezone(
+    ($currentUser && isset($currentUser['timezone'])) ? (string)$currentUser['timezone'] : 'UTC'
+);
 $userCurrency = ($currentUser && isset($currentUser['currency'])) ? $currentUser['currency'] : 'USD';
 
 // Persist and backfill campaign status filter for dashboard, campaigns, campaign-stats

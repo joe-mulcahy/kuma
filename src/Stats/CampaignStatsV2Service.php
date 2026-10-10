@@ -9,6 +9,8 @@ use SimpleKuma\Database\ClicksTableResolver;
 use SimpleKuma\Entity\Campaign;
 use SimpleKuma\Entity\TrafficSource;
 use SimpleKuma\Facebook\FacebookCostAggregator;
+use SimpleKuma\Honeycomb\BindingStore;
+use SimpleKuma\Honeycomb\HoneycombCostAggregator;
 use SimpleKuma\Utils\Formatter;
 
 /**
@@ -203,7 +205,13 @@ class CampaignStatsV2Service
                 $utcRange['to'],
                 (string)$campaignId
             );
-            $totalCost = $manualCost + $fbCost + $gaCost;
+            $honeyCost = (new HoneycombCostAggregator($this->db))->getCampaignTotalCost(
+                $campaignId,
+                $utcRange['from'],
+                $utcRange['to'],
+                $timezone
+            );
+            $totalCost = $manualCost + $fbCost + $gaCost + $honeyCost;
         }
 
         return $this->buildSummaryFromTotals(
@@ -260,7 +268,13 @@ class CampaignStatsV2Service
                 $utcRange['to'],
                 (string)$campaignId
             );
-            $totalCost = $manualCost + $fbCost + $gaCost;
+            $honeyCost = (new HoneycombCostAggregator($this->db))->getCampaignTotalCost(
+                $campaignId,
+                $utcRange['from'],
+                $utcRange['to'],
+                $timezone
+            );
+            $totalCost = $manualCost + $fbCost + $gaCost + $honeyCost;
         }
 
         $visitorsCount = (int)($totals['visitors'] ?? 0);
@@ -449,6 +463,11 @@ class CampaignStatsV2Service
             return true;
         }
 
+        $campaignId = (int)($campaign['id'] ?? 0);
+        if ($campaignId > 0 && (new BindingStore($this->db))->campaignHasBinding($campaignId)) {
+            return true;
+        }
+
         $tsId = (int)($campaign['traffic_source_id'] ?? 0);
         if ($tsId < 1) {
             return false;
@@ -491,15 +510,23 @@ class CampaignStatsV2Service
         }
 
         $apiCost = $this->campaignUsesIntegratedApiCost($campaign);
-        // Filtered / nested expands still need scoped per-click cost allocation.
-        if ($apiCost && ($parentPath !== [] || $filters->requiresScopedCost())) {
+        // Filtered expands still need scoped per-click cost allocation.
+        // Token↔hour nests stay on hourly pre-agg + Meta overlay (no scoped joins).
+        $tokenHourlyNest = $this->isTokenHourlyBreakdownNest($groupBy, $parentPath);
+        if ($apiCost && $filters->requiresScopedCost()) {
+            return null;
+        }
+        if ($apiCost && $parentPath !== [] && !$tokenHourlyNest) {
             return null;
         }
 
         $utcAligned = Formatter::canUseUtcSummaryDateRange($dateFrom, $dateTo, $utcFrom, $utcTo);
 
-        // summary_date is UTC — never map it onto non-UTC calendar day labels for date dim.
-        if ($groupBy === 'date' && !$utcAligned) {
+        // summary_date / UTC hour — never map onto non-UTC calendar labels for these dims.
+        if (in_array($groupBy, ['date', 'week', 'day_of_week', 'hour'], true) && !$utcAligned) {
+            return null;
+        }
+        if ($tokenHourlyNest && !$utcAligned) {
             return null;
         }
 
@@ -553,11 +580,39 @@ class CampaignStatsV2Service
                 $rows,
                 $utcFrom,
                 $utcTo,
-                $campaign
+                $campaign,
+                $parentPath
             );
         }
 
         return $rows;
+    }
+
+    /**
+     * @param list<array{dimension: string, value: string}> $parentPath
+     */
+    private function isTokenHourlyBreakdownNest(string $groupBy, array $parentPath): bool
+    {
+        if (count($parentPath) !== 1) {
+            return false;
+        }
+        $parentDim = (string)($parentPath[0]['dimension'] ?? '');
+        $isToken = static function (string $dim): bool {
+            if ($dim === '' || in_array($dim, ['offer', 'landing', 'date', 'hour', 'week', 'day_of_week', 'traffic_source'], true)) {
+                return false;
+            }
+            if (isset(CampaignStatsExpressions::BUILTIN_COLUMN_MAP[$dim])) {
+                return false;
+            }
+            if (in_array($dim, CampaignStatsExpressions::FIXED_GROUP_BY, true)) {
+                return false;
+            }
+
+            return true;
+        };
+
+        return ($groupBy === 'hour' && $isToken($parentDim))
+            || ($parentDim === 'hour' && $isToken($groupBy));
     }
 
     /**
@@ -977,6 +1032,138 @@ class CampaignStatsV2Service
             $filters,
             $campaign
         );
+    }
+
+    /**
+     * Chart-tab insights (hour + day-of-week). Uses summary-first / lean breakdown paths.
+     * Not loaded on Overview first paint — Chart tab only.
+     *
+     * @return array{
+     *   hour: array{labels: list<string>, visitors: list<int>, clicks: list<int>, conversions: list<int>, cost: list<float>, revenue: list<float>, profit: list<float>},
+     *   day_of_week: array{labels: list<string>, visitors: list<int>, clicks: list<int>, conversions: list<int>, cost: list<float>, revenue: list<float>, profit: list<float>},
+     *   highlights: array{best_hour: ?array{label: string, profit: float}, worst_hour: ?array{label: string, profit: float}, best_day: ?array{label: string, profit: float}, worst_day: ?array{label: string, profit: float}}
+     * }
+     */
+    public function getChartInsights(
+        int $campaignId,
+        string $dateFrom,
+        string $dateTo,
+        string $timezone,
+        ?CampaignStatsQueryFilters $filters = null
+    ): array {
+        ReportingQueryCancel::throwIfAborted();
+        $filters ??= new CampaignStatsQueryFilters();
+
+        $hour = $this->insightSeriesFromBreakdown(
+            $campaignId,
+            $dateFrom,
+            $dateTo,
+            $timezone,
+            'hour',
+            $filters
+        );
+        ReportingQueryCancel::throwIfAborted();
+        $dayOfWeek = $this->insightSeriesFromBreakdown(
+            $campaignId,
+            $dateFrom,
+            $dateTo,
+            $timezone,
+            'day_of_week',
+            $filters
+        );
+
+        return [
+            'hour' => $hour,
+            'day_of_week' => $dayOfWeek,
+            'highlights' => [
+                'best_hour' => $this->insightExtreme($hour, true),
+                'worst_hour' => $this->insightExtreme($hour, false),
+                'best_day' => $this->insightExtreme($dayOfWeek, true),
+                'worst_day' => $this->insightExtreme($dayOfWeek, false),
+            ],
+        ];
+    }
+
+    /**
+     * @return array{labels: list<string>, visitors: list<int>, clicks: list<int>, conversions: list<int>, cost: list<float>, revenue: list<float>, profit: list<float>}
+     */
+    private function insightSeriesFromBreakdown(
+        int $campaignId,
+        string $dateFrom,
+        string $dateTo,
+        string $timezone,
+        string $dimension,
+        CampaignStatsQueryFilters $filters
+    ): array {
+        $bd = $this->getBreakdown(
+            $campaignId,
+            $dateFrom,
+            $dateTo,
+            $timezone,
+            [$dimension],
+            [],
+            1,
+            50,
+            'group',
+            'asc',
+            $filters
+        );
+        $labels = [];
+        $visitors = [];
+        $clicks = [];
+        $conversions = [];
+        $cost = [];
+        $revenue = [];
+        $profit = [];
+        foreach ($bd['rows'] ?? [] as $row) {
+            $labels[] = (string)($row['name'] ?? $row['group_label'] ?? $row['group'] ?? '');
+            $v = (int)($row['clicks'] ?? $row['visitors'] ?? 0);
+            $visitors[] = $v;
+            $clicks[] = (int)($row['lp_clicks'] ?? $row['action_clicks'] ?? 0);
+            $conversions[] = (int)($row['conversions'] ?? 0);
+            $c = (float)($row['cost'] ?? 0);
+            $r = (float)($row['revenue'] ?? 0);
+            $cost[] = round($c, 4);
+            $revenue[] = round($r, 4);
+            $profit[] = round($r - $c, 4);
+        }
+
+        return [
+            'labels' => $labels,
+            'visitors' => $visitors,
+            'clicks' => $clicks,
+            'conversions' => $conversions,
+            'cost' => $cost,
+            'revenue' => $revenue,
+            'profit' => $profit,
+        ];
+    }
+
+    /**
+     * @param array{labels: list<string>, profit: list<float>} $series
+     * @return array{label: string, profit: float}|null
+     */
+    private function insightExtreme(array $series, bool $best): ?array
+    {
+        $labels = $series['labels'] ?? [];
+        $profits = $series['profit'] ?? [];
+        if ($labels === [] || $profits === []) {
+            return null;
+        }
+        $idx = 0;
+        $extreme = (float)$profits[0];
+        foreach ($profits as $i => $p) {
+            $p = (float)$p;
+            if ($best ? ($p > $extreme) : ($p < $extreme)) {
+                $extreme = $p;
+                $idx = (int)$i;
+            }
+        }
+
+        return [
+            'label' => (string)($labels[$idx] ?? ''),
+            'profit' => round($extreme, 2),
+        ];
     }
 
     /**
@@ -1408,6 +1595,18 @@ class CampaignStatsV2Service
                 $sort = 'group';
                 $order = 'asc';
             }
+        } elseif ($groupBy === 'hour') {
+            $allRows = CampaignStatsExpressions::fillHourRangeRows($allRows);
+            if ($sort === 'clicks') {
+                $sort = 'group';
+                $order = 'asc';
+            }
+        } elseif ($groupBy === 'day_of_week') {
+            $allRows = CampaignStatsExpressions::fillDayOfWeekRows($allRows);
+            if ($sort === 'clicks') {
+                $sort = 'group';
+                $order = 'asc';
+            }
         }
 
         $sortCol = CampaignStatsExpressions::sortColumn($sort);
@@ -1606,7 +1805,7 @@ class CampaignStatsV2Service
         if ($hasExclusionFlag) {
             $sql = "
                 SELECT SUM(CASE WHEN cl.exclude_from_stats = 0 THEN 1 ELSE 0 END) AS visitors,
-                       SUM(CASE WHEN cl.exclude_from_stats = 0 AND cl.lp_click = 1 THEN 1 ELSE 0 END) AS lp_clicks,
+                       SUM(CASE WHEN cl.exclude_from_stats = 0 AND cl.lp_click = 1 AND cl.landing_page_id IS NOT NULL THEN 1 ELSE 0 END) AS lp_clicks,
                        SUM(CASE WHEN cl.exclude_from_stats = 0 AND cl.lp_click = 1 AND cl.landing_page_id IS NULL THEN 1 ELSE 0 END) AS direct_clicks,
                        SUM(CASE WHEN cl.exclude_from_stats = 1 THEN 1 ELSE 0 END) AS bot_clicks,
                        COALESCE(SUM(CASE WHEN cl.exclude_from_stats = 0 THEN cl.cost ELSE 0 END), 0) AS manual_cost
@@ -1616,7 +1815,7 @@ class CampaignStatsV2Service
         } else {
             $sql = "
                 SELECT COUNT(*) AS visitors,
-                       SUM(CASE WHEN cl.lp_click = 1 THEN 1 ELSE 0 END) AS lp_clicks,
+                       SUM(CASE WHEN cl.lp_click = 1 AND cl.landing_page_id IS NOT NULL THEN 1 ELSE 0 END) AS lp_clicks,
                        SUM(CASE WHEN cl.lp_click = 1 AND cl.landing_page_id IS NULL THEN 1 ELSE 0 END) AS direct_clicks,
                        0 AS bot_clicks,
                        COALESCE(SUM(cl.cost), 0) AS manual_cost
@@ -1737,7 +1936,7 @@ class CampaignStatsV2Service
                 SELECT {$groupExpr} AS group_key
                        {$selectLabel},
                        COUNT(*) AS clicks,
-                       SUM(CASE WHEN cl.lp_click = 1 THEN 1 ELSE 0 END) AS lp_clicks,
+                       SUM(CASE WHEN cl.lp_click = 1 AND cl.landing_page_id IS NOT NULL THEN 1 ELSE 0 END) AS lp_clicks,
                        SUM(CASE WHEN cl.lp_click = 1 AND cl.landing_page_id IS NULL THEN 1 ELSE 0 END) AS direct_clicks,
                        COALESCE(SUM(cl.cost), 0) AS manual_cost
                 FROM clicks cl{$force}
@@ -1893,7 +2092,7 @@ class CampaignStatsV2Service
         $dim = CampaignStatsExpressions::unwrapDimensionKey($groupBy);
         $index = match ($dim) {
             'region', 'country', 'city' => 'idx_clicks_region_ts',
-            'landing', 'offer', 'date' => 'idx_clicks_ts_stats_cover',
+            'landing', 'offer', 'date', 'hour', 'week', 'day_of_week' => 'idx_clicks_ts_stats_cover',
             'adset_name' => 'idx_clicks_campaign_ts_adset_name_value',
             'ad_name' => 'idx_clicks_campaign_ts_ad_name_value',
             default => 'idx_clicks_ts_stats_cover',

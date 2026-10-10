@@ -40,34 +40,47 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
     </script>
     <title><?= htmlspecialchars($pageTitle ?? 'Simple KUMA') ?> - Simple KUMA</title>
     <link rel="icon" type="image/x-icon" href="<?= ASSETS_BASE_URL ?>/assets/images/favicon.ico">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/main.css">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/themes.css">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/theme-switcher.css">
+    <?php
+    // Prefer shared helper (bootstrap_web_paths.php); keep local fallback for safety.
+    $skCssHref = static function (string $relativeUnderPublic): string {
+        if (function_exists('sk_css_href')) {
+            return sk_css_href($relativeUnderPublic);
+        }
+        $full = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR
+            . str_replace('/', DIRECTORY_SEPARATOR, ltrim($relativeUnderPublic, '/'));
+        $ver = is_file($full) ? (string) filemtime($full) : '1';
+        return ASSETS_BASE_URL . '/' . ltrim($relativeUnderPublic, '/') . '?v=' . rawurlencode($ver);
+    };
+    ?>
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/main.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/themes.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/theme-switcher.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/campaign-form.css')) ?>">
     <!-- MOBILE DASHBOARD STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-dashboard.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-dashboard.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-dashboard.css')) ?>">
     <!-- MOBILE VISITORS STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-visitors.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-visitors.css">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/conversion-log.css">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-conversions.css">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/email-optins.css?v=4">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/campaign-list-filters.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-visitors.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/conversion-log.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-conversions.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/email-optins.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/campaign-list-filters.css')) ?>">
     <!-- MOBILE CAMPAIGNS STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-campaigns.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-campaigns.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-campaigns.css')) ?>">
     <!-- MOBILE TRAFFIC SOURCES STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-traffic-sources.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-traffic-sources.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-traffic-sources.css')) ?>">
     <!-- MOBILE OFFERS STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-offers.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-offers.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-offers.css')) ?>">
     <!-- MOBILE LANDING PAGES STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-landing-pages.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-landing-pages.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-landing-pages.css')) ?>">
     <!-- MOBILE NETWORKS STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-networks.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-networks.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-networks.css')) ?>">
     <!-- MOBILE POSTBACKS STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-postbacks.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-postbacks.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-postbacks.css')) ?>">
     <!-- MOBILE BILLING STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-billing.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-billing.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-billing.css')) ?>">
     <!-- MOBILE SETTINGS STYLES - To remove mobile styles, delete the line below and delete public/assets/css/mobile-settings.css -->
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/mobile-settings.css">
-    <link rel="stylesheet" href="<?= ASSETS_BASE_URL ?>/assets/css/settings-layout.css?v=2">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/mobile-settings.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($skCssHref('assets/css/settings-layout.css')) ?>">
 </head>
 <body>
     <div class="app-wrapper">
@@ -283,6 +296,20 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
                         if ($shouldShow): 
                         ?>
                         <li class="sidebar-nav-item">
+                            <a href="<?= APP_BASE_URL ?>/index.php?page=honeycomb"
+                               class="sidebar-nav-link <?= ($currentPage ?? '') === 'honeycomb' ? 'active' : '' ?>">
+                                <img src="<?= ASSETS_BASE_URL ?>/assets/images/honeycombsmall.png" alt="Honeycomb" class="sidebar-nav-icon">
+                                <span>Honeycomb</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
+                            <a href="<?= APP_BASE_URL ?>/index.php?page=server-status"
+                               class="sidebar-nav-link <?= ($currentPage ?? '') === 'server-status' ? 'active' : '' ?>">
+                                <img src="<?= ASSETS_BASE_URL ?>/assets/images/autodetectbear.png" alt="Server Status" class="sidebar-nav-icon">
+                                <span>Server Status</span>
+                            </a>
+                        </li>
+                        <li class="sidebar-nav-item">
                             <a href="<?= APP_BASE_URL ?>/index.php?page=settings" 
                                class="sidebar-nav-link <?= ($currentPage ?? '') === 'settings' ? 'active' : '' ?>">
                                 <img src="<?= ASSETS_BASE_URL ?>/assets/images/settings.png" alt="Settings" class="sidebar-nav-icon">
@@ -299,6 +326,8 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
                 <div class="sidebar-footer-full">
                     Simple Kuma V <?= htmlspecialchars($skAppVersion) ?><br>
                     <span style="font-size: 10px;">Work is Never Over</span><br>
+                    <a href="<?= htmlspecialchars(defined('USER_GUIDE_URL') ? USER_GUIDE_URL : 'https://simplekuma.com/user-guide/') ?>" class="sidebar-footer-about" target="_blank" rel="noopener noreferrer">User Guide</a>
+                    <span class="sidebar-footer-sep" aria-hidden="true"> · </span>
                     <a href="<?= APP_BASE_URL ?>/index.php?page=settings&tab=about" class="sidebar-footer-about">About Kuma</a>
                 </div>
                 <div class="sidebar-footer-collapsed" title="Simple Kuma V <?= htmlspecialchars($skAppVersion) ?>">
@@ -492,6 +521,248 @@ $dashboardChartsHidden = !empty($GLOBALS['dashboardChartsHidden']);
             })();
             </script>
             <?php endif; ?>
+
+            <?php
+            // Honeycomb addon updates — cache-only on render; lazy refresh like core.
+            $showHoneycombUpdateCheck = !empty($currentPage) && $currentPage !== 'tracking';
+            $honeycombBannerShown = false;
+            $scheduleLazyHoneycombCheck = false;
+            if ($showHoneycombUpdateCheck) {
+                try {
+                    $honeyDb = $GLOBALS['db'] ?? null;
+                    $closeHoneyDb = false;
+                    if (!$honeyDb instanceof mysqli || $honeyDb->connect_error) {
+                        $honeyDb = new mysqli(DB_HOST, DB_USER, DB_PASSWORD, DB_NAME);
+                        $closeHoneyDb = true;
+                    }
+                    if (!$honeyDb->connect_error) {
+                        $honeySettings = new \SimpleKuma\Settings\SettingsManager($honeyDb);
+                        $honeyUpdateChecker = new \SimpleKuma\Honeycomb\AddonUpdateChecker($honeyDb, $honeySettings);
+                        $honeyUpdateInfo = $honeyUpdateChecker->getCachedResult(true);
+                        $scheduleLazyHoneycombCheck = !$honeyUpdateChecker->isCacheFresh();
+
+                        if (
+                            is_array($honeyUpdateInfo)
+                            && !empty($honeyUpdateInfo['success'])
+                            && (int) ($honeyUpdateInfo['outdated_count'] ?? 0) > 0
+                        ) {
+                            $honeyCount = (int) $honeyUpdateInfo['outdated_count'];
+                            $honeyFp = preg_replace('/[^a-zA-Z0-9@.,_-]/', '', (string) ($honeyUpdateInfo['fingerprint'] ?? '')) ?: 'unknown';
+                            $honeyNames = [];
+                            foreach (($honeyUpdateInfo['outdated'] ?? []) as $ou) {
+                                if (is_array($ou) && isset($ou['name'])) {
+                                    $honeyNames[] = (string) $ou['name'];
+                                }
+                            }
+                            $honeyLabel = $honeyCount === 1
+                                ? (($honeyNames[0] ?? 'An addon') . ' has an update')
+                                : ($honeyCount . ' Honeycomb addons have updates');
+                            $honeycombBannerShown = true;
+                            ?>
+                        <div id="honeycomb-update-banner" style="background: linear-gradient(135deg, #e65100 0%, #ef6c00 100%); color: #ffffff; padding: 16px 24px; margin: 0; border-bottom: 2px solid rgba(255,255,255,0.2); box-shadow: 0 2px 8px rgba(0,0,0,0.1); position: relative; z-index: 99;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; max-width: 1400px; margin: 0 auto; flex-wrap: wrap; gap: 16px;">
+                                <div style="display: flex; align-items: center; gap: 16px; flex: 1; min-width: 200px;">
+                                    <img src="<?= ASSETS_BASE_URL ?>/assets/images/honeycombsmall.png" alt="" width="28" height="28" style="flex-shrink: 0;">
+                                    <div>
+                                        <strong style="font-size: 18px; display: block; margin-bottom: 4px;">Honeycomb Addon Updates</strong>
+                                        <span style="font-size: 15px; opacity: 0.95;"><?= htmlspecialchars($honeyLabel) ?><?php if ($honeyCount > 1 && $honeyNames !== []): ?> (<?= htmlspecialchars(implode(', ', array_slice($honeyNames, 0, 3))) ?><?= count($honeyNames) > 3 ? '…' : '' ?>)<?php endif; ?></span>
+                                    </div>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <a href="?page=honeycomb"
+                                       style="padding: 10px 20px; background: rgba(255,255,255,0.2); color: #ffffff; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; text-decoration: none; font-size: 15px; font-weight: 600; transition: all 0.2s; white-space: nowrap;"
+                                       onmouseover="this.style.background='rgba(255,255,255,0.3)'; this.style.borderColor='rgba(255,255,255,0.5)'"
+                                       onmouseout="this.style.background='rgba(255,255,255,0.2)'; this.style.borderColor='rgba(255,255,255,0.3)'">
+                                        Open Honeycomb
+                                    </a>
+                                    <button type="button" onclick="document.getElementById('honeycomb-update-banner').style.display='none'; localStorage.setItem('honeycomb_update_dismissed_<?= htmlspecialchars($honeyFp) ?>', 'true');"
+                                            style="padding: 10px 14px; background: transparent; color: #ffffff; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; cursor: pointer; font-size: 22px; line-height: 1; transition: all 0.2s;"
+                                            onmouseover="this.style.background='rgba(255,255,255,0.2)'"
+                                            onmouseout="this.style.background='transparent'"
+                                            title="Dismiss">
+                                        ×
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <script>
+                        if (localStorage.getItem('honeycomb_update_dismissed_<?= htmlspecialchars($honeyFp) ?>') === 'true') {
+                            document.getElementById('honeycomb-update-banner').style.display = 'none';
+                        }
+                        </script>
+                            <?php
+                        }
+                    }
+                    if ($closeHoneyDb && isset($honeyDb) && $honeyDb instanceof mysqli) {
+                        $honeyDb->close();
+                    }
+                } catch (\Throwable $e) {
+                    error_log('Honeycomb update check error: ' . $e->getMessage());
+                }
+            }
+
+            if ($scheduleLazyHoneycombCheck && !$honeycombBannerShown):
+                $lazyHoneycombCheckUrl = APP_BASE_URL . '/api-check-honeycomb-updates.php';
+                ?>
+            <div id="honeycomb-update-slot"></div>
+            <script>
+            (function () {
+                var apiUrl = <?= json_encode($lazyHoneycombCheckUrl, JSON_THROW_ON_ERROR) ?>;
+
+                function showHoneyBanner(info) {
+                    if (!info || !info.outdated_count || info.outdated_count < 1) return;
+                    var fp = String(info.fingerprint || 'unknown').replace(/[^a-zA-Z0-9@.,_-]/g, '') || 'unknown';
+                    if (localStorage.getItem('honeycomb_update_dismissed_' + fp) === 'true') return;
+                    if (document.getElementById('honeycomb-update-banner')) return;
+
+                    var slot = document.getElementById('honeycomb-update-slot');
+                    if (!slot) return;
+
+                    var count = parseInt(info.outdated_count, 10) || 0;
+                    var names = [];
+                    (info.outdated || []).forEach(function (row) {
+                        if (row && row.name) names.push(String(row.name));
+                    });
+                    var label = count === 1
+                        ? ((names[0] || 'An addon') + ' has an update')
+                        : (count + ' Honeycomb addons have updates');
+                    if (count > 1 && names.length) {
+                        label += ' (' + names.slice(0, 3).join(', ') + (names.length > 3 ? '…' : '') + ')';
+                    }
+                    var esc = function (s) {
+                        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+                    };
+                    var iconUrl = <?= json_encode(ASSETS_BASE_URL . '/assets/images/honeycombsmall.png', JSON_THROW_ON_ERROR) ?>;
+
+                    slot.outerHTML =
+                        '<div id="honeycomb-update-banner" style="background: linear-gradient(135deg, #e65100 0%, #ef6c00 100%); color: #ffffff; padding: 16px 24px; margin: 0; border-bottom: 2px solid rgba(255,255,255,0.2); box-shadow: 0 2px 8px rgba(0,0,0,0.1); position: relative; z-index: 99;">' +
+                        '<div style="display: flex; align-items: center; justify-content: space-between; max-width: 1400px; margin: 0 auto; flex-wrap: wrap; gap: 16px;">' +
+                        '<div style="display: flex; align-items: center; gap: 16px; flex: 1; min-width: 200px;">' +
+                        '<img src="' + esc(iconUrl) + '" alt="" width="28" height="28" style="flex-shrink: 0;">' +
+                        '<div><strong style="font-size: 18px; display: block; margin-bottom: 4px;">Honeycomb Addon Updates</strong>' +
+                        '<span style="font-size: 15px; opacity: 0.95;">' + esc(label) + '</span></div></div>' +
+                        '<div style="display: flex; align-items: center; gap: 12px;">' +
+                        '<a href="?page=honeycomb" style="padding: 10px 20px; background: rgba(255,255,255,0.2); color: #ffffff; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; text-decoration: none; font-size: 15px; font-weight: 600; white-space: nowrap;">Open Honeycomb</a>' +
+                        '<button type="button" id="honeycomb-update-dismiss" style="padding: 10px 14px; background: transparent; color: #ffffff; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; cursor: pointer; font-size: 22px; line-height: 1;" title="Dismiss">×</button>' +
+                        '</div></div></div>';
+
+                    var dismissBtn = document.getElementById('honeycomb-update-dismiss');
+                    if (dismissBtn) {
+                        dismissBtn.addEventListener('click', function () {
+                            var banner = document.getElementById('honeycomb-update-banner');
+                            if (banner) banner.style.display = 'none';
+                            localStorage.setItem('honeycomb_update_dismissed_' + fp, 'true');
+                        });
+                    }
+                }
+
+                function runCheck() {
+                    fetch(apiUrl, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                        .then(function (r) { return r.json(); })
+                        .then(showHoneyBanner)
+                        .catch(function () { /* ignore */ });
+                }
+
+                if ('requestIdleCallback' in window) {
+                    requestIdleCallback(runCheck, { timeout: 5000 });
+                } else {
+                    setTimeout(runCheck, 2000);
+                }
+            })();
+            </script>
+            <?php elseif ($scheduleLazyHoneycombCheck): ?>
+            <script>
+            (function () {
+                var apiUrl = <?= json_encode(APP_BASE_URL . '/api-check-honeycomb-updates.php', JSON_THROW_ON_ERROR) ?>;
+                function runCheck() {
+                    fetch(apiUrl, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                        .catch(function () { /* ignore */ });
+                }
+                if ('requestIdleCallback' in window) {
+                    requestIdleCallback(runCheck, { timeout: 5000 });
+                } else {
+                    setTimeout(runCheck, 2000);
+                }
+            })();
+            </script>
+            <?php endif; ?>
+
+            <?php
+            // In-app host resource warnings (CPU / RAM / disk) — no email
+            $showHostResourceBanner = !empty($currentPage)
+                && $currentPage !== 'tracking'
+                && (!$permission || $permission->hasPermission(Permission::PERM_SETTINGS_VIEW));
+            if ($showHostResourceBanner) {
+                try {
+                    $hostDb = $GLOBALS['db'] ?? null;
+                    $closeHostDb = false;
+                    if (!$hostDb instanceof mysqli || $hostDb->connect_error) {
+                        $hostDb = new mysqli(DB_HOST, DB_USER, DB_PASSWORD, DB_NAME);
+                        $closeHostDb = true;
+                    }
+                    if (!$hostDb->connect_error) {
+                        $hostSettings = new \SimpleKuma\Settings\SettingsManager($hostDb);
+                        \SimpleKuma\DataRetention\HostResourceHealth::maybeEvaluateAndRecord(
+                            $hostSettings,
+                            dirname(__DIR__, 2)
+                        );
+                        $hostWarnings = \SimpleKuma\DataRetention\HostResourceHealth::activeWarnings($hostSettings);
+                        if ($hostWarnings !== []) {
+                            $warnStamp = (string) $hostSettings->get('host_resources_warn_last_at', '');
+                            $dismissKey = 'host_resource_warn_dismissed_' . md5($warnStamp . '|' . implode(',', array_column($hostWarnings, 'kind')));
+                            $primary = $hostWarnings[0];
+                            $extraCount = count($hostWarnings) - 1;
+                            $summary = $primary['label'];
+                            if ($extraCount > 0) {
+                                $summary .= ' (+' . $extraCount . ' more)';
+                            }
+                            ?>
+                        <div id="host-resource-warning-banner" style="background: linear-gradient(135deg, #c97800 0%, #a85f00 100%); color: #ffffff; padding: 14px 24px; margin: 0; border-bottom: 2px solid rgba(255,255,255,0.2); box-shadow: 0 2px 8px rgba(0,0,0,0.08); position: relative; z-index: 99;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; max-width: 1400px; margin: 0 auto; flex-wrap: wrap; gap: 12px;">
+                                <div style="flex: 1; min-width: 200px;">
+                                    <strong style="font-size: 16px; display: block; margin-bottom: 2px;"><?= htmlspecialchars($summary) ?></strong>
+                                    <span style="font-size: 13px; opacity: 0.95;"><?= htmlspecialchars($primary['detail']) ?></span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <a href="<?= APP_BASE_URL ?>/index.php?page=server-status"
+                                       style="padding: 8px 16px; background: rgba(255,255,255,0.2); color: #ffffff; border: 1px solid rgba(255,255,255,0.35); border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap;">
+                                        Server Status
+                                    </a>
+                                    <button type="button" id="host-resource-warning-dismiss"
+                                            style="padding: 8px 12px; background: transparent; color: #ffffff; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; cursor: pointer; font-size: 20px; line-height: 1;"
+                                            title="Dismiss">×</button>
+                                </div>
+                            </div>
+                        </div>
+                        <script>
+                        (function () {
+                            var key = <?= json_encode($dismissKey, JSON_THROW_ON_ERROR) ?>;
+                            var banner = document.getElementById('host-resource-warning-banner');
+                            if (!banner) return;
+                            if (localStorage.getItem(key) === 'true') {
+                                banner.style.display = 'none';
+                                return;
+                            }
+                            var btn = document.getElementById('host-resource-warning-dismiss');
+                            if (btn) {
+                                btn.addEventListener('click', function () {
+                                    banner.style.display = 'none';
+                                    localStorage.setItem(key, 'true');
+                                });
+                            }
+                        })();
+                        </script>
+                            <?php
+                        }
+                    }
+                    if ($closeHostDb && $hostDb instanceof mysqli) {
+                        $hostDb->close();
+                    }
+                } catch (\Throwable $e) {
+                    error_log('Host resource banner error: ' . $e->getMessage());
+                }
+            }
+            ?>
             
             <!-- Content Container -->
             <div class="content-container">

@@ -76,6 +76,9 @@ class ClicksUnifiedViewSync
             "ADD COLUMN exclude_from_stats TINYINT(1) NOT NULL DEFAULT 0
                 COMMENT '1 = omit from reporting until a conversion proves the click real'
                 AFTER extra_json",
+            "ADD COLUMN isp VARCHAR(255) NULL COMMENT 'ISP / ASN organization' AFTER city",
+            "ADD COLUMN connection_type VARCHAR(32) NULL COMMENT 'Cellular, Broadband, Corporate, or Unknown' AFTER isp",
+            "ADD COLUMN language VARCHAR(16) NULL COMMENT 'Primary Accept-Language tag' AFTER connection_type",
         ];
 
         foreach ($alterations as $fragment) {

@@ -99,14 +99,16 @@ final class CampaignListStatsService
             }
         }
 
-        // Match DashboardStatsService: FB/GA aggregators only for API-cost campaigns.
+        // Match DashboardStatsService: FB/GA/Honeycomb aggregators only for API-cost campaigns.
         // Manual campaigns keep summary/raw manual_cost (no 10s+ allocator scan).
         $fbCostMap = [];
         $gaCostMap = [];
+        $honeyCostMap = [];
         if ($includeApiCosts) {
             $costMaps = $this->batchApiCosts($idsForCost, $utcFrom, $utcTo, $userTimezone);
             $fbCostMap = $costMaps['fb'];
             $gaCostMap = $costMaps['ga'];
+            $honeyCostMap = $costMaps['honey'] ?? [];
         }
 
         $out = $empty;
@@ -130,6 +132,9 @@ final class CampaignListStatsService
             if (isset($gaCostMap[$id])) {
                 $cost += (float)$gaCostMap[$id];
             }
+            if (isset($honeyCostMap[$id])) {
+                $cost += (float)$honeyCostMap[$id];
+            }
             $profit = $revenue - $cost;
             $roi = $cost > 0
                 ? (($revenue - $cost) / $cost) * 100
@@ -151,10 +156,10 @@ final class CampaignListStatsService
     }
 
     /**
-     * FB/GA cost only for campaigns that use integrated API spend (same split as dashboard).
+     * FB/GA/Honeycomb cost only for campaigns that use integrated API spend (same split as dashboard).
      *
      * @param list<int> $campaignIds
-     * @return array{fb: array<int, float>, ga: array<int, float>}
+     * @return array{fb: array<int, float>, ga: array<int, float>, honey: array<int, float>}
      */
     private function batchApiCosts(
         array $campaignIds,
@@ -163,7 +168,7 @@ final class CampaignListStatsService
         string $userTimezone
     ): array {
         if ($campaignIds === []) {
-            return ['fb' => [], 'ga' => []];
+            return ['fb' => [], 'ga' => [], 'honey' => []];
         }
 
         $fbIds = [];
@@ -219,7 +224,20 @@ final class CampaignListStatsService
             }
         }
 
-        return ['fb' => $fbMap, 'ga' => $gaMap];
+        $honeyMap = [];
+        try {
+            $apiHoney = (new \SimpleKuma\Honeycomb\HoneycombCostAggregator($this->db))
+                ->getCostsByCampaignIds($campaignIds, $utcFrom, $utcTo, $userTimezone);
+            foreach ($apiHoney as $cid => $amount) {
+                if ((float)$amount > 0) {
+                    $honeyMap[(int)$cid] = (float)$amount;
+                }
+            }
+        } catch (\Exception $e) {
+            error_log('CampaignListStatsService: batch Honeycomb cost error: ' . $e->getMessage());
+        }
+
+        return ['fb' => $fbMap, 'ga' => $gaMap, 'honey' => $honeyMap];
     }
 
     /**

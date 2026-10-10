@@ -53,7 +53,9 @@ if ($permission && !$permission->hasPermission(Permission::PERM_STATS_VIEW)) {
 
 $currentUser = $auth->getCurrentUser();
 $userId = (int)($currentUser['id'] ?? 0);
-$userTimezone = ($currentUser && isset($currentUser['timezone'])) ? (string)$currentUser['timezone'] : 'UTC';
+$userTimezone = Formatter::normalizeTimezone(
+    ($currentUser && isset($currentUser['timezone'])) ? (string)$currentUser['timezone'] : 'UTC'
+);
 // Long stats queries must not hold the session lock (blocks Campaigns / other tabs).
 $auth->releaseSessionLock();
 
@@ -122,6 +124,16 @@ try {
             $payload = CampaignStatsResponseCache::remember($cacheKey, static function () use ($service, $campaignId, $dateFrom, $dateTo, $userTimezone, $granularity, $filters) {
                 return ReportingConcurrencyGuard::run(
                     static fn () => $service->getChart($campaignId, $dateFrom, $dateTo, $userTimezone, $granularity, $filters)
+                );
+            }, StatsResponseCache::TTL_CHART);
+            echo json_encode(['ok' => true, 'data' => $payload]);
+            break;
+
+        case 'chart_insights':
+            $cacheKey = CampaignStatsResponseCache::makeKey($userId, 'chart_insights', $cacheParts);
+            $payload = CampaignStatsResponseCache::remember($cacheKey, static function () use ($service, $campaignId, $dateFrom, $dateTo, $userTimezone, $filters) {
+                return ReportingConcurrencyGuard::run(
+                    static fn () => $service->getChartInsights($campaignId, $dateFrom, $dateTo, $userTimezone, $filters)
                 );
             }, StatsResponseCache::TTL_CHART);
             echo json_encode(['ok' => true, 'data' => $payload]);

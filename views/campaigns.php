@@ -104,9 +104,16 @@ if ($action === 'clone' && $id && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'min_postback_payout' => $originalCampaign['min_postback_payout'] ?? null,
             'allow_multiple_conversions' => !empty($originalCampaign['allow_multiple_conversions']),
             'fallback_offer_id' => $originalCampaign['fallback_offer_id'] ?? null,
+            'inactive_redirect_mode' => $originalCampaign['inactive_redirect_mode'] ?? 'off',
+            'inactive_redirect_campaign_id' => $originalCampaign['inactive_redirect_campaign_id'] ?? null,
+            'inactive_redirect_url' => $originalCampaign['inactive_redirect_url'] ?? null,
             'custom_tokens' => $originalCampaign['custom_tokens_json'] ?? [],
             'redirect_rules' => $originalCampaign['redirect_rules_json'] ?? []
         ];
+        $cloneData = array_merge(
+            $cloneData,
+            \SimpleKuma\Campaign\InactiveRedirectParser::fromInput($cloneData)
+        );
         
         // Debug: Log what we're about to save
         error_log('=== CLONE DATA ===');
@@ -259,6 +266,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $tables = $db->query("SHOW TABLES LIKE 'clicks_stats_by_token_daily'");
                 if ($tables && $tables->num_rows > 0) {
                     $stmt = $db->prepare("DELETE FROM clicks_stats_by_token_daily WHERE campaign_id = ?");
+                    $stmt->bind_param('i', $campaignId);
+                    $stmt->execute();
+                    $stmt->close();
+                }
+
+                $tables = $db->query("SHOW TABLES LIKE 'clicks_stats_by_token_hourly'");
+                if ($tables && $tables->num_rows > 0) {
+                    $stmt = $db->prepare("DELETE FROM clicks_stats_by_token_hourly WHERE campaign_id = ?");
                     $stmt->bind_param('i', $campaignId);
                     $stmt->execute();
                     $stmt->close();
@@ -451,6 +466,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'fallback_offer_id' => !empty($_POST['fallback_offer_id']) ? (int)$_POST['fallback_offer_id'] : null,
         'tags' => !empty($_POST['tags']) ? trim((string)$_POST['tags']) : null,
     ];
+        $data = array_merge($data, \SimpleKuma\Campaign\InactiveRedirectParser::fromInput($_POST));
+        if ($action === 'edit' && $id) {
+            $data['_editing_campaign_id'] = (int) $id;
+        }
 
         // Parse traffic source postbacks for auto-detect campaigns
         $trafficSourcePostbacks = [];
@@ -586,6 +605,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+
+        // Whop Ads: exactly one enabled landing page (ad destination = that LP URL)
+        if (empty($errors) && is_array($tsData ?? null)
+            && trim((string) ($tsData['provider_key'] ?? '')) === 'whop'
+            && in_array($flowType, ['LP', 'Split'], true)
+        ) {
+            $enabledWhopLps = [];
+            if ($flowType === 'LP') {
+                $lpRows = is_array($rotation['landing_pages'] ?? null) ? $rotation['landing_pages'] : [];
+            } else {
+                $lpRows = is_array($rotation['lp_path']['landing_pages'] ?? null)
+                    ? $rotation['lp_path']['landing_pages']
+                    : [];
+            }
+            foreach ($lpRows as $lpRow) {
+                if (!empty($lpRow['enabled']) && !empty($lpRow['id'])) {
+                    $enabledWhopLps[] = (int) $lpRow['id'];
+                }
+            }
+            if (count($enabledWhopLps) === 0) {
+                $errors['landing_pages'] = 'Whop Ads campaigns require exactly one landing page (the ad destination).';
+            } elseif (count($enabledWhopLps) > 1) {
+                $errors['landing_pages'] = 'Whop Ads campaigns allow only one landing page. Remove extra LPs or switch traffic source.';
+            }
+        }
         
         error_log('Validation errors: ' . print_r($errors, true));
         error_log('Action before update check: ' . $action);
@@ -611,6 +655,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ? array_map('intval', $_POST['custom_postback_ids']) 
                         : [];
                     $customPostback->setForCampaign($id, $customPostbackIds);
+                    (new \SimpleKuma\Honeycomb\HoneycombCampaignFields($db))->saveFromPost($id, $_POST);
                     
                     // Handle slug management
                     $campaignSlug = new \SimpleKuma\Entity\CampaignSlug($db);
@@ -695,6 +740,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ? array_map('intval', $_POST['custom_postback_ids']) 
                             : [];
                         $customPostback->setForCampaign($newId, $customPostbackIds);
+                        (new \SimpleKuma\Honeycomb\HoneycombCampaignFields($db))->saveFromPost($newId, $_POST);
                         
                         // Handle slug creation
                         $campaignSlug = new \SimpleKuma\Entity\CampaignSlug($db);
@@ -767,6 +813,17 @@ $googleAdsIntegrations = [];
 $allCustomPostbacks = [];
 $verifiedTrackingDomains = [];
 $firstSelectableTrafficSource = null;
+$honeycombAddonsByProvider = [];
+$honeycombBindingsBySlug = [];
+$honeycombCampaignFieldProviders = [];
+$whopBizAccountId = '';
+$ringbaAddonEnabled = false;
+$ringbaBindingExtra = [
+    'enabled' => false,
+    'js_tag_id' => '',
+    'click_param' => 'click_id',
+    'number_to_replace' => '',
+];
 $isLegacyAutoDetectCampaign = $action === 'edit' && $editCampaign && empty($editCampaign['traffic_source_id']);
 
 if ($action !== 'list') {
@@ -783,6 +840,46 @@ if ($action !== 'list') {
     $allCustomPostbacks = $customPostback->getAll();
     $verifiedTrackingDomains = $trackingDomain->getVerified();
     $firstSelectableTrafficSource = TrafficSourceReleaseHelper::getFirstSelectable($trafficSources);
+    $honeyFields = new \SimpleKuma\Honeycomb\HoneycombCampaignFields($db);
+    $honeycombAddonsByProvider = $honeyFields->enabledByProviderKey();
+    $honeycombCampaignFieldProviders = $honeyFields->campaignFieldsProviders();
+    foreach ($honeycombCampaignFieldProviders as $honeyProvider) {
+        if ($honeyProvider->addonSlug() === 'ringba') {
+            $ringbaAddonEnabled = true;
+            break;
+        }
+    }
+    if ($action === 'edit' && !empty($editCampaign['id'])) {
+        foreach ($honeycombCampaignFieldProviders as $honeyProvider) {
+            $slug = $honeyProvider->addonSlug();
+            $honeycombBindingsBySlug[$slug] = $honeyFields->bindingForCampaign((int) $editCampaign['id'], $slug);
+        }
+        $rb = $honeycombBindingsBySlug['ringba'] ?? null;
+        if (is_array($rb)) {
+            $rbExtra = is_array($rb['extra'] ?? null) ? $rb['extra'] : [];
+            $ringbaBindingExtra = [
+                'enabled' => !empty($rbExtra['enabled']),
+                'js_tag_id' => (string) ($rbExtra['js_tag_id'] ?? ''),
+                'click_param' => (string) ($rbExtra['click_param'] ?? 'click_id'),
+                'number_to_replace' => (string) ($rbExtra['number_to_replace'] ?? ''),
+            ];
+        }
+    }
+    // Whop Ads: biz_ for campaign-editor copy snippets
+    if (isset($honeycombAddonsByProvider['whop'])) {
+        $whopCredStore = new \SimpleKuma\Honeycomb\CredentialStore($db);
+        foreach ($whopCredStore->listByAddon('whop-ads') as $whopMeta) {
+            if (($whopMeta['status'] ?? '') !== 'active') {
+                continue;
+            }
+            $whopFull = $whopCredStore->getById((int) ($whopMeta['id'] ?? 0), true);
+            $whopPayload = is_array($whopFull['payload'] ?? null) ? $whopFull['payload'] : [];
+            $whopBizAccountId = trim((string) ($whopPayload['account_id'] ?? ''));
+            if ($whopBizAccountId !== '') {
+                break;
+            }
+        }
+    }
 }
 
 // Initialize CampaignSlug entity
@@ -2288,481 +2385,7 @@ if ($editCampaign && isset($editCampaign['id'])) {
                 <?php if ($id): ?>
                 <input type="hidden" name="id" value="<?= (int)$id ?>">
                 <?php endif; ?>
-                <!-- Main Settings Box -->
-                <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); 
-                             border: 3px solid #3d5a26; 
-                             border-radius: 12px; 
-                             padding: 0; 
-                             margin-bottom: 24px;
-                             box-shadow: 0 4px 12px rgba(61, 90, 38, 0.15);">
-                    <!-- Styled Header -->
-                    <div style="background: linear-gradient(135deg, #3d5a26 0%, #558b2f 100%); 
-                                padding: 16px 24px; 
-                                border-radius: 9px 9px 0 0;
-                                border-bottom: 2px solid #2d451f;">
-                        <h3 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px;">
-                            <span style="font-size: 20px;">⚙️</span>
-                            Main Settings
-                        </h3>
-                </div>
-
-                    <!-- Settings Content -->
-                    <div style="padding: 24px;">
-                        <!-- Campaign Name & Default CPC Row -->
-                        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 20px;">
-                            <div>
-                                <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                    Campaign Name <span style="color: #d32f2f;">*</span>
-                                </label>
-                                <input type="text" name="name" value="<?= htmlspecialchars($editCampaign['name'] ?? '') ?>" 
-                                       required placeholder="e.g., FB Keto Campaign"
-                                   style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                            </div>
-                            <div>
-                                <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">Default CPC</label>
-                                <?php
-                                $editDefaultCpc = $editCampaign['default_cpc'] ?? null;
-                                $editDefaultCpcValue = ($editDefaultCpc === null || $editDefaultCpc === '')
-                                    ? ''
-                                    : rtrim(rtrim(number_format((float) $editDefaultCpc, 6, '.', ''), '0'), '.');
-                                ?>
-                                <input type="number" name="default_cpc" step="any" min="0"
-                                       value="<?= htmlspecialchars($editDefaultCpcValue) ?>"
-                                       placeholder="0.00"
-                                       style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                <div style="font-size: 12px; color: #666; margin-top: 4px;">Used when cost param not provided</div>
-                            </div>
-                        </div>
-
-                        <!-- Tags Row -->
-                        <div style="margin-bottom: 20px;">
-                            <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                Tags
-                            </label>
-                            <input type="text" name="tags" value="<?= htmlspecialchars($editCampaign['tags'] ?? '') ?>" 
-                                   placeholder="e.g. sweeps, tier1, test (comma-separated)"
-                                   style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                            <div style="font-size: 12px; color: #666; margin-top: 4px;">Comma-separated tags for filtering and organizing</div>
-                        </div>
-
-                        <!-- Status, Group, Referrer privacy Row -->
-                        <div class="campaign-settings-row" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #e0e0e0;">
-                            <div>
-                                <label style="display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; color: #333;">Status</label>
-                                <select name="status" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                    <option value="active" <?= ($editCampaign['status'] ?? 'active') === 'active' ? 'selected' : '' ?>>Active</option>
-                                    <option value="paused" <?= ($editCampaign['status'] ?? '') === 'paused' ? 'selected' : '' ?>>Paused</option>
-                                    <option value="archived" <?= ($editCampaign['status'] ?? '') === 'archived' ? 'selected' : '' ?>>Archived</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label style="display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; color: #333;">Group (Optional)</label>
-                                <select name="campaign_group_id" 
-                                        style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                    <option value="">No Group</option>
-                                    <?php foreach ($campaignGroups as $group): ?>
-                                        <option value="<?= $group['id'] ?>" <?= ($editCampaign['campaign_group_id'] ?? 0) == $group['id'] ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($group['name']) ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <div style="font-size: 11px; color: #666; margin-top: 3px;">
-                                    <a href="?page=settings&tab=campaign-groups" style="color: #3d5a26; text-decoration: none;">Manage Groups</a>
-                                </div>
-                            </div>
-                            <?php $editReferrerMode = $editCampaign['referrer_mode'] ?? $editCampaign['cloaking_mode'] ?? ''; ?>
-                            <div>
-                                <label style="display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; color: #333;">Referrer privacy</label>
-                                <select name="referrer_mode" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                    <option value="" <?= $editReferrerMode === '' ? 'selected' : '' ?>>Standard redirect</option>
-                                    <option value="blank" <?= $editReferrerMode === 'blank' ? 'selected' : '' ?>>Strip referrer (meta refresh)</option>
-                                    <option value="noreferrer" <?= $editReferrerMode === 'noreferrer' ? 'selected' : '' ?>>No referrer header</option>
-                                    <option value="double" <?= $editReferrerMode === 'double' ? 'selected' : '' ?>>Bear hop (two-step)</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <?php
-                        $editCampaignSafe = is_array($editCampaign) ? $editCampaign : [];
-                        $editEdgeEnabled = !empty($editCampaignSafe['edge_enabled']);
-                        $edgeEligibility = \SimpleKuma\Edge\EdgeEligibility::evaluate(array_merge($editCampaignSafe, [
-                            'edge_enabled' => true,
-                            'status' => $editCampaignSafe['status'] ?? 'active',
-                            'referrer_mode' => $editReferrerMode,
-                            'redirectless_tracking' => !empty($editCampaignSafe['redirectless_tracking']),
-                        ]));
-                        $edgeSyncedAt = $editCampaignSafe['edge_synced_at'] ?? null;
-                        $edgeSyncError = $editCampaignSafe['edge_sync_error'] ?? null;
-                        ?>
-                        <div class="campaign-edge-redirect-box" style="margin-bottom: 20px; padding: 14px 16px; border-radius: 6px;">
-                            <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin-bottom: 0;">
-                                <input type="checkbox" name="edge_enabled" value="1" <?= $editEdgeEnabled ? 'checked' : '' ?>
-                                       style="margin-top: 3px; width: 16px; height: 16px; flex-shrink: 0;">
-                                <span>
-                                    <strong class="edge-box-title" style="display: block; margin-bottom: 4px;">Edge redirect (Cloudflare Worker)</strong>
-                                    <span class="edge-box-desc" style="font-size: 13px; line-height: 1.4; display: block;">
-                                        Serve redirects from Cloudflare’s edge for much lower latency worldwide.
-                                        Requires Edge Redirect setup under Settings. Phase 1 supports standard 302 only (no referrer privacy modes).
-                                    </span>
-                                </span>
-                            </label>
-                            <?php if ($action === 'edit' && $editEdgeEnabled): ?>
-                                <div class="edge-box-status" style="margin-top: 10px; font-size: 12px;">
-                                    <?php if (!$edgeEligibility['eligible']): ?>
-                                        <div class="edge-status-ineligible" style="font-weight: 500;">Not eligible while enabled: <?= htmlspecialchars((string) $edgeEligibility['reason']) ?></div>
-                                    <?php elseif ($edgeSyncError): ?>
-                                        <div class="edge-status-error" style="font-weight: 500;">Last sync error: <?= htmlspecialchars((string) $edgeSyncError) ?></div>
-                                    <?php elseif ($edgeSyncedAt): ?>
-                                        <div class="edge-status-synced" style="font-weight: 500;">Last synced to edge: <?= htmlspecialchars((string) $edgeSyncedAt) ?> UTC</div>
-                                    <?php else: ?>
-                                        <div class="edge-status-waiting">Waiting for first edge sync…</div>
-                                    <?php endif; ?>
-                                </div>
-                            <?php endif; ?>
-                            <div style="margin-top: 8px; font-size: 12px;">
-                                <a href="?page=settings&tab=edge-redirect" class="edge-box-link">Configure Edge Redirect →</a>
-                            </div>
-                        </div>
-
-                        <!-- Traffic Source -->
-                        <div style="margin-bottom: 20px;">
-                            <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                Traffic Source <span style="color:#d32f2f;">*</span>
-                            </label>
-                            <?php if ($isLegacyAutoDetectCampaign): ?>
-                            <div style="background: #fff3e0; border: 1px solid #ff9800; border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px; color: #5d4037; line-height: 1.45;">
-                                This campaign was using <strong>Kuma Auto Detected</strong>, which is no longer available. Select a specific traffic source before saving.
-                            </div>
-                            <?php endif; ?>
-                            <select name="traffic_source_id" id="traffic_source_id" 
-                                    onchange="updateTrackingLink(); toggleFacebookIntegration(); toggleGoogleAdsIntegration(); toggleTrafficSourceSelector();"
-                                    style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;"
-                                    aria-label="Select traffic source" required>
-                                <?php if ($isLegacyAutoDetectCampaign): ?>
-                                <option value="">Select traffic source...</option>
-                                <?php endif; ?>
-                                <?php foreach ($trafficSources as $ts):
-                                    $isSelectable = TrafficSourceReleaseHelper::isSelectableForRelease($ts);
-                                    $isFacebook = stripos($ts['name'], 'facebook') !== false;
-                                    $isGoogle = TrafficSourceReleaseHelper::usesGoogleAdsIntegration($ts);
-                                    $isSelected = ($editCampaign['traffic_source_id'] ?? 0) == $ts['id']
-                                        || ($action === 'add' && $firstSelectableTrafficSource && (int)$firstSelectableTrafficSource['id'] === (int)$ts['id']);
-                                ?>
-                                    <option value="<?= $ts['id'] ?>" 
-                                            data-tokens='<?= htmlspecialchars(json_encode($ts['tokens_json'] ?? [])) ?>'
-                                            data-cost-param='<?= htmlspecialchars($ts['cost_param_key'] ?? '') ?>'
-                                            data-is-facebook="<?= $isFacebook ? '1' : '0' ?>"
-                                            data-is-google="<?= $isGoogle ? '1' : '0' ?>"
-                                            <?= !$isSelectable ? ' disabled' : '' ?>
-                                            <?= $isSelected ? 'selected' : '' ?>>
-                                <?= htmlspecialchars($ts['name']) ?><?= !$isSelectable ? ' (Coming soon)' : '' ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <div style="font-size: 12px; color: #666; margin-top: 4px; line-height: 1.45;">
-                        Facebook, Google Ads, YouTube, or a custom source with manual cost in the URL.
-                        Google/YouTube conversions use scheduled CSV import (Settings → Integrations). API cost sync is optional.
-                    </div>
-                </div>
-
-                        <!-- Minimum payout to fire postbacks -->
-                        <div style="margin-bottom: 20px; padding: 14px; background: #f9faf7; border: 1px solid #e0e6d8; border-radius: 6px;">
-                            <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">Minimum payout to fire postbacks (optional)</label>
-                            <?php
-                            $editMinPostbackPayout = $editCampaign['min_postback_payout'] ?? null;
-                            $editMinPostbackPayoutValue = ($editMinPostbackPayout === null || $editMinPostbackPayout === '')
-                                ? ''
-                                : rtrim(rtrim(number_format((float)$editMinPostbackPayout, 6, '.', ''), '0'), '.');
-                            ?>
-                            <input type="number" name="min_postback_payout" step="any" min="0"
-                                   value="<?= htmlspecialchars($editMinPostbackPayoutValue) ?>"
-                                   placeholder="No minimum — fire all postbacks"
-                                   style="width:100%;max-width:280px;padding:10px;border:2px solid #ddd;border-radius:4px;">
-                            <p style="font-size: 12px; color: #666; margin-top: 6px; line-height: 1.45;">
-                                Optional. All conversions always appear in Kuma. When set, outbound postbacks only fire when value or payout meets this minimum.
-                            </p>
-                        </div>
-
-                        <div style="margin-bottom: 20px; padding: 14px; background: #f9faf7; border: 1px solid #e0e6d8; border-radius: 6px;">
-                            <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
-                                <input type="checkbox" name="allow_multiple_conversions" value="1"
-                                       <?= !empty($editCampaign['allow_multiple_conversions']) ? 'checked' : '' ?>
-                                       style="margin-top: 3px;">
-                                <span>
-                                    <span style="display: block; font-weight: 600; color: #333; margin-bottom: 4px;">Allow multiple conversions on the same click</span>
-                                    <span style="display: block; font-size: 12px; color: #666; line-height: 1.45;">
-                                        For networks like Propush that can send several payouts on one click ID.
-                                        Prefer a unique <code>txid</code> when the network provides one. Same <code>txid</code>/<code>event_id</code> is still treated as a duplicate.
-                                    </span>
-                                </span>
-                            </label>
-                        </div>
-
-                        <!-- Tracking Domain Selection -->
-                        <div style="margin-bottom: 20px;">
-                            <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                Tracking Domain (Optional)
-                            </label>
-                            <select name="tracking_domain_id" 
-                                    id="campaign-tracking-domain-select"
-                                    onchange="updateChompJSCode()"
-                                    style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                <option value="" data-domain-url="<?= htmlspecialchars(BASE_URL) ?>">Use Main Tracker Domain (<?= parse_url(BASE_URL, PHP_URL_HOST) ?>)</option>
-                                <?php if (!empty($verifiedTrackingDomains)): ?>
-                                    <option value="">─────────────────────────</option>
-                                    <?php foreach ($verifiedTrackingDomains as $domain): ?>
-                                        <?php $domainStatusLabel = ($domain['status'] ?? '') === 'verified_manual' ? ' (Manual)' : ''; ?>
-                                        <option value="<?= $domain['id'] ?>" 
-                                                data-domain-url="<?= htmlspecialchars($domain['domain']) ?>"
-                                                <?= ($editCampaign['tracking_domain_id'] ?? null) == $domain['id'] ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($domain['domain']) ?><?= $domainStatusLabel ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </select>
-                            <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                                Select a custom tracking domain to use for this campaign's tracking links. Only verified domains are shown.
-                                <a href="?page=settings&tab=domains" target="_blank" style="color: #3d5a26;">Manage domains</a>
-                            </div>
-                        </div>
-
-                        <!-- Facebook integrations (only visible when Facebook is selected) -->
-                        <div id="facebook_integration_field" style="margin-bottom: 24px; display: none;">
-                            <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                Facebook CAPI Integration (Optional)
-                            </label>
-                            <select name="facebook_capi_integration_id" id="facebook_capi_integration_id"
-                                    style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                <option value="">No Facebook Integration</option>
-                                <?php foreach ($facebookIntegrations as $fbIntegration): ?>
-                                    <option value="<?= $fbIntegration['id'] ?>" 
-                                            <?= ($editCampaign['facebook_capi_integration_id'] ?? null) == $fbIntegration['id'] ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($fbIntegration['name']) ?> (<?= htmlspecialchars($fbIntegration['pixel_id']) ?>)
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                                Select a Facebook CAPI integration to use for this campaign. 
-                                <a href="?page=settings&tab=integrations" target="_blank" style="color: #3d5a26;">Manage integrations</a>
-                            </div>
-
-                            <!-- Facebook Marketing Ad Account (cost tracking + Meta campaign linking) -->
-                            <div style="margin-top: 20px;">
-                                <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                    Facebook Ad Account (For Cost Tracking)
-                                </label>
-                                <select name="facebook_marketing_ad_account_id" id="facebook_marketing_ad_account_id"
-                                        style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                    <option value="">No Facebook Ad Account</option>
-                                    <?php foreach ($allFacebookAdAccounts as $adAccount): ?>
-                                        <option value="<?= $adAccount['id'] ?>" 
-                                                <?= ($editCampaign['facebook_marketing_ad_account_id'] ?? null) == $adAccount['id'] ? 'selected' : '' ?>
-                                                <?= ($adAccount['integration_status'] ?? 'active') !== 'active' ? 'style="color: #999;"' : '' ?>>
-                                            <?= htmlspecialchars($adAccount['ad_account_name']) ?>
-                                            <?= !empty($adAccount['ad_account_id']) ? ' (' . htmlspecialchars($adAccount['ad_account_id']) . ')' : '' ?>
-                                            <?= !empty($adAccount['currency']) ? ' - ' . htmlspecialchars($adAccount['currency']) : '' ?>
-                                            <?= !empty($adAccount['integration_name']) ? ' [' . htmlspecialchars($adAccount['integration_name']) . ']' : '' ?>
-                                            <?= ($adAccount['integration_status'] ?? 'active') !== 'active' ? ' [Integration Paused]' : '' ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                                    Select the specific Facebook ad account for this campaign. This ensures cost tracking queries the correct ad account. 
-                                    <a href="?page=settings&tab=api-costs" target="_blank" style="color: #3d5a26;">Manage integrations</a>
-                                </div>
-
-                                <div id="facebook_meta_campaign_field" style="margin-top: 16px;">
-                                    <div style="background: #f5f8f2; border: 1px solid #c5d4b8; border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px; color: #444; line-height: 1.45;">
-                                        <strong style="color: #3d5a26;">Meta campaign for cost tracking</strong><br>
-                                        Choose the Facebook/Meta campaign whose ad spend you want Kuma to pull into reports.
-                                        Pick your ad account above first, click <strong>Refresh Meta campaigns</strong>, then select the matching campaign.
-                                        Optional — leave blank to infer costs from clicks only (slower, less accurate on large ad accounts).
-                                    </div>
-                                    <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                        Meta Campaign (optional)
-                                    </label>
-                                    <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px;">
-                                        <button type="button" id="fb_refresh_meta_campaigns_btn" class="btn btn-secondary" style="padding: 8px 14px;">
-                                            Refresh Meta campaigns
-                                        </button>
-                                        <span id="fb_meta_campaign_status" style="font-size: 12px; color: #666;"></span>
-                                    </div>
-                                    <select name="facebook_marketing_campaign_id" id="facebook_marketing_campaign_id"
-                                            style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;" disabled>
-                                        <option value="">Select ad account first</option>
-                                    </select>
-                                    <p style="font-size: 12px; color: #666; margin-top: 6px;">
-                                        Only <strong>ACTIVE</strong> campaigns are listed. Sync pulls the latest from Meta for the selected ad account.
-                                        <a href="?page=settings&tab=api-costs" target="_blank" style="color: #3d5a26;">Manage ad accounts</a>
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Google Ads Integration Dropdown (only when Google/YouTube is selected) -->
-                        <div id="google_ads_integration_field" style="margin-bottom: 24px; display: none;">
-                            <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                Google Ads Integration (Optional)
-                            </label>
-                            <select name="google_ads_integration_id" id="google_ads_integration_id"
-                                    style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                <option value="">No Google Ads Integration</option>
-                                <?php foreach ($googleAdsIntegrations as $gaIntegration): ?>
-                                    <option value="<?= (int)$gaIntegration['id'] ?>"
-                                            <?= ($editCampaign['google_ads_integration_id'] ?? null) == $gaIntegration['id'] ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($gaIntegration['name']) ?>
-                                        <?php if (!empty($gaIntegration['customer_id'])): ?>
-                                            (<?= htmlspecialchars($gaIntegration['customer_id']) ?>)
-                                        <?php endif; ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <div style="font-size: 12px; color: #666; margin-top: 4px; line-height: 1.45;">
-                                Optional. Link an integration for CSV/Data Manager import and/or API conversion upload. Cost sync uses the Google Ads API cost cron when credentials are configured.
-                                <a href="?page=settings&tab=api-costs" target="_blank" style="color: #3d5a26;">Manage integrations</a>
-                            </div>
-                        </div>
-
-                        <!-- Per-Traffic-Source Integration Selection (only visible for auto-detect campaigns) -->
-                        <div id="traffic_source_postbacks_section" style="margin-bottom: 24px; display: none;">
-                            <div style="background: #fff3e0; border: 2px solid #ff9800; border-radius: 6px; padding: 16px;">
-                                <h4 style="margin: 0 0 12px 0; color: #e65100; font-size: 16px;">
-                                    🎯 Integration Selection for Auto-Detect Campaign
-                                </h4>
-                                <p style="margin: 0 0 16px 0; color: #666; font-size: 12px; line-height: 1.5;">
-                                    Select which integrations to use for each traffic source type. When a conversion occurs, Kuma will automatically use the correct integration based on the detected traffic source.
-                                </p>
-                                
-                                <?php
-                                // Load existing traffic source postback configs if editing
-                                $existingTsPostbacks = [];
-                                if ($action === 'edit' && $editCampaign && !empty($editCampaign['traffic_source_postbacks_json'])) {
-                                    $existingTsPostbacks = is_array($editCampaign['traffic_source_postbacks_json']) 
-                                        ? $editCampaign['traffic_source_postbacks_json'] 
-                                        : json_decode($editCampaign['traffic_source_postbacks_json'], true) ?? [];
-                                }
-                                
-                                // Group traffic sources by type for simpler UI
-                                $trafficSourceGroups = [];
-                                foreach ($trafficSources as $ts) {
-                                    if (empty($ts['id'])) continue;
-                                    $name = strtolower($ts['name'] ?? '');
-                                    $group = 'other';
-                                    if (strpos($name, 'facebook') !== false) $group = 'facebook';
-                                    elseif (strpos($name, 'google') !== false && strpos($name, 'youtube') === false) $group = 'google';
-                                    elseif (strpos($name, 'youtube') !== false) $group = 'youtube';
-                                    elseif (strpos($name, 'bing') !== false) $group = 'bing';
-                                    
-                                    if (!isset($trafficSourceGroups[$group])) {
-                                        $trafficSourceGroups[$group] = [];
-                                    }
-                                    $trafficSourceGroups[$group][] = $ts;
-                                }
-                                
-                                // Show integration selectors for main traffic source types
-                                $integrationGroups = [
-                                    'facebook' => ['label' => 'Facebook', 'integrations' => $facebookIntegrations, 'type' => 'facebook_capi_integration_id'],
-                                    'google' => ['label' => 'Google Ads', 'integrations' => $googleAdsIntegrations, 'type' => 'google_ads_integration_id'],
-                                    'youtube' => ['label' => 'YouTube', 'integrations' => $googleAdsIntegrations, 'type' => 'google_ads_integration_id'],
-                                    'bing' => ['label' => 'Bing', 'integrations' => [], 'type' => null], // Bing doesn't have integrations yet
-                                ];
-                                
-                                foreach ($integrationGroups as $groupKey => $groupConfig):
-                                    if (empty($groupConfig['integrations']) && $groupConfig['type'] !== null) continue;
-                                    
-                                    // Find traffic sources in this group
-                                    $groupTrafficSources = $trafficSourceGroups[$groupKey] ?? [];
-                                    if (empty($groupTrafficSources)) continue;
-                                    
-                                    // Use first traffic source ID as the key (they'll all use the same integration)
-                                    $firstTsId = $groupTrafficSources[0]['id'];
-                                    $tsConfig = $existingTsPostbacks[$firstTsId] ?? [];
-                                ?>
-                                <div style="margin-bottom: 12px;">
-                                    <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #333; font-size: 13px;">
-                                        <?= htmlspecialchars($groupConfig['label']) ?> Integration
-                                    </label>
-                                    <?php if ($groupConfig['type'] === 'facebook_capi_integration_id'): ?>
-                                        <select name="traffic_source_postbacks[<?= $firstTsId ?>][facebook_capi_integration_id]"
-                                                style="width: 100%; max-width: 400px; padding: 8px; border: 2px solid #ddd; border-radius: 4px; font-size: 13px;">
-                                            <option value="">None</option>
-                                            <?php foreach ($groupConfig['integrations'] as $integration): ?>
-                                                <option value="<?= $integration['id'] ?>" 
-                                                        <?= ($tsConfig['facebook_capi_integration_id'] ?? null) == $integration['id'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($integration['name']) ?> (<?= htmlspecialchars($integration['pixel_id']) ?>)
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    <?php elseif ($groupConfig['type'] === 'google_ads_integration_id'): ?>
-                                        <select name="traffic_source_postbacks[<?= $firstTsId ?>][google_ads_integration_id]"
-                                                style="width: 100%; max-width: 400px; padding: 8px; border: 2px solid #ddd; border-radius: 4px; font-size: 13px;">
-                                            <option value="">None</option>
-                                            <?php foreach ($groupConfig['integrations'] as $integration): ?>
-                                                <option value="<?= $integration['id'] ?>"
-                                                        <?= ($tsConfig['google_ads_integration_id'] ?? null) == $integration['id'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($integration['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                        <div style="font-size: 11px; color: #666; margin-top: 6px; line-height: 1.4;">
-                                            Used for scheduled CSV conversion import. Configure the import URL under
-                                            <a href="?page=settings&tab=integrations" style="color: #3d5a26;">Settings → Integrations</a>.
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                                <?php endforeach; ?>
-                                
-                                <div style="margin-top: 12px; padding: 10px; background: #fff3cd; border-radius: 4px; border-left: 3px solid #ff9800;">
-                                    <p style="margin: 0; font-size: 11px; color: #856404; line-height: 1.4;">
-                                        <strong>Note:</strong> Custom postbacks configured below will fire for all traffic sources. Use this section only to select platform-specific integrations (Facebook CAPI, Google Ads) per traffic source type.
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Custom Postbacks — always available for every traffic source -->
-                        <div id="custom_postbacks_section" style="margin-bottom: 24px;">
-                            <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #333;">
-                                Custom Postbacks (Optional)
-                            </label>
-                            <?php if (!empty($allCustomPostbacks)): ?>
-                            <div class="custom-postbacks-container" style="border: 2px solid #ddd; border-radius: 4px; padding: 12px; background: #fff; max-height: 200px; overflow-y: auto;">
-                                <?php foreach ($allCustomPostbacks as $postback): ?>
-                                    <label class="custom-postback-item" style="display: flex; align-items: flex-start; gap: 10px; padding: 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s; margin-bottom: 4px;"
-                                           onmouseover="this.style.background='#f5f5f5';"
-                                           onmouseout="this.style.background='transparent';">
-                                        <input type="checkbox" 
-                                               name="custom_postback_ids[]" 
-                                               value="<?= $postback['id'] ?>"
-                                               <?= in_array($postback['id'], $selectedCustomPostbackIds) ? 'checked' : '' ?>
-                                               style="margin-top: 2px; cursor: pointer; width: 18px; height: 18px; flex-shrink: 0;">
-                                        <div class="custom-postback-content" style="flex: 1; min-width: 0;">
-                                            <div style="font-weight: 500; color: #333; margin-bottom: 2px; word-wrap: break-word; overflow-wrap: break-word;">
-                                                <?= htmlspecialchars($postback['name']) ?>
-                                            </div>
-                                            <?php if (!empty($postback['description'])): ?>
-                                                <div style="font-size: 12px; color: #666; word-wrap: break-word; overflow-wrap: break-word;">
-                                                    <?= htmlspecialchars($postback['description']) ?>
-                                                </div>
-                                            <?php endif; ?>
-                                        </div>
-                                    </label>
-                                <?php endforeach; ?>
-                            </div>
-                            <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                                Select one or more postbacks to fire when conversions occur for this campaign (any traffic source).
-                                <a href="?page=settings&tab=integrations" target="_blank" style="color: #3d5a26;">Manage postbacks</a>
-                            </div>
-                            <?php else: ?>
-                            <div style="border: 2px dashed #ddd; border-radius: 4px; padding: 14px; background: #fafafa; color: #666; font-size: 13px; line-height: 1.45;">
-                                No custom postbacks yet. Create outbound postback URLs under
-                                <a href="?page=settings&tab=integrations" target="_blank" style="color: #3d5a26;">Settings → Integrations</a>,
-                                then attach them here — they work for every traffic source (including PropellerAds).
-                            </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                </div>
+                <?php include __DIR__ . '/partials/campaign-form-main-settings.php'; ?>
 
                 <!-- Redirect Rules (Accordion) -->
                 <details style="margin-bottom: 24px;">
@@ -3182,6 +2805,12 @@ if ($editCampaign && isset($editCampaign['id'])) {
                             = Equal Weights
                     </button>
                     </legend>
+                    <p style="font-size: 12px; color: #558b2f; margin: 0 0 12px; line-height: 1.45;">
+                        Weight changes apply immediately on origin tracking links.
+                        <?php if (!empty($editCampaignSafe['edge_enabled'] ?? $editEdgeEnabled ?? false)): ?>
+                        With Edge redirect enabled, Cloudflare may take about a minute to use new weights after sync (see Edge status above).
+                        <?php endif; ?>
+                    </p>
                     <div id="offer_rotation_items">
                         <?php
                         // Determine which offers to pre-populate based on campaign type
@@ -3288,15 +2917,24 @@ if ($editCampaign && isset($editCampaign['id'])) {
                 <!-- Also shown for Split flow type (uses same LPs) -->
                 <div id="lp_fields" style="margin-bottom: 32px; display: <?= in_array($editCampaign['flow_type'] ?? '', ['LP', 'Split']) ? 'block' : 'none' ?>;">
                     <fieldset style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 20px; border-radius: 8px; border: 2px solid #2196F3;">
-                        <legend style="font-weight: 600; color: #0d47a1; display: flex; align-items: center; gap: 8px; padding: 0 8px;">
+                        <legend id="lp_rotation_legend" style="font-weight: 600; color: #0d47a1; display: flex; align-items: center; gap: 8px; padding: 0 8px;">
                             <img src="<?= ASSETS_BASE_URL ?>/assets/images/landingpages.png" alt="Landing Pages" style="width: 20px; height: 20px;">
-                            Landing Page Rotation (Weights must sum to 100%)
-                            <button type="button" onclick="equalizeLPWeights()" class="btn btn-outline" 
+                            <span id="lp_rotation_legend_text">Landing Page Rotation (Weights must sum to 100%)</span>
+                            <button type="button" id="lp_equalize_weights_btn" onclick="equalizeLPWeights()" class="btn btn-outline" 
                                     style="margin-left: auto; padding: 6px 16px; font-size: 13px; background: white; border-color: #2196F3; color: #2196F3; font-weight: 600;"
                                     title="Distribute weights evenly">
                                 = Equal Weights
                             </button>
                         </legend>
+                        <p id="lp_rotation_help" style="font-size: 12px; color: #1565c0; margin: 0 0 12px; line-height: 1.45;">
+                            Weight changes apply immediately on origin tracking links.
+                            <?php if (!empty($editCampaignSafe['edge_enabled'] ?? $editEdgeEnabled ?? false)): ?>
+                            With Edge redirect enabled, edge updates usually land within about a minute after sync.
+                            <?php endif; ?>
+                        </p>
+                        <p id="lp_rotation_whop_help" style="display:none;font-size:12px;color:#4a3563;margin:0 0 12px;line-height:1.45;padding:10px 12px;background:#f3eef8;border:1px solid #c5b3d6;border-radius:6px;">
+                            Whop Ads allows <strong>one landing page</strong> — that LP URL is what you paste into Whop as the ad destination (Pixel must run there).
+                        </p>
                         <div id="lp_items">
                             <?php 
                             // Load landing pages based on flow type
@@ -3331,13 +2969,16 @@ if ($editCampaign && isset($editCampaign['id'])) {
                                 <select name="lp_id[]" id="lp_select_<?= $idx ?>"
                                         style="padding: 8px; border: 2px solid #ddd; border-radius: 4px; <?= !$lpEnabled ? 'background: #f5f5f5; color: #999; cursor: not-allowed; pointer-events: none;' : '' ?>"
                                         <?= !$lpEnabled ? 'tabindex="-1" aria-disabled="true"' : '' ?>
-                                        aria-label="Select landing page">
+                                        aria-label="Select landing page"
+                                        onchange="if (typeof updateWhopAdDestination === 'function') updateWhopAdDestination();">
                                     <option value="">Select landing page...</option>
                                     <?php 
                                     // Extract LP ID from the stored structure
                                     $currentLpId = isset($editLP['id']) ? (int)$editLP['id'] : 0;
                                     foreach ($landingPages as $lp): ?>
-                                        <option value="<?= $lp['id'] ?>" <?= ($currentLpId > 0 && $currentLpId == $lp['id']) ? 'selected' : '' ?>>
+                                        <option value="<?= $lp['id'] ?>"
+                                                data-lp-url="<?= htmlspecialchars((string) ($lp['url'] ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+                                                <?= ($currentLpId > 0 && $currentLpId == $lp['id']) ? 'selected' : '' ?>>
                                             <?= htmlspecialchars($lp['name']) ?> (ID: <?= $lp['id'] ?>)
                                         </option>
                                     <?php endforeach; ?>
@@ -3346,12 +2987,13 @@ if ($editCampaign && isset($editCampaign['id'])) {
                                        value="<?= htmlspecialchars(isset($editLP['weight']) ? (int)$editLP['weight'] : 100) ?>"
                                        <?= !$lpEnabled ? 'readonly' : '' ?>
                                        style="padding: 8px; border: 2px solid #ddd; border-radius: 4px; <?= !$lpEnabled ? 'background: #f5f5f5; color: #999; cursor: not-allowed;' : '' ?>"
-                                       aria-label="Landing page weight percentage">
-                                <button type="button" class="btn btn-outline" onclick="addLPItem()" aria-label="Add another landing page">+</button>
+                                       aria-label="Landing page weight percentage"
+                                       onchange="if (typeof updateWhopAdDestination === 'function') updateWhopAdDestination();">
+                                <button type="button" class="btn btn-outline lp-add-btn" onclick="addLPItem()" aria-label="Add another landing page">+</button>
                             </div>
                     <?php endforeach; ?>
                         </div>
-                        <div style="font-size: 12px; color: #666; margin-top: 8px;">
+                        <div id="lp_rotation_tip" style="font-size: 12px; color: #666; margin-top: 8px;">
                             💡 Make sure your LPs include the click tracker script
                         </div>
                     </fieldset>
@@ -3642,7 +3284,7 @@ if ($editCampaign && isset($editCampaign['id'])) {
             </h2>
         </div>
         <div class="card-body">
-            <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-left: 4px solid #4caf50; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(76, 175, 80, 0.1);">
+            <div id="tracking-links-banner-default" style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-left: 4px solid #4caf50; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(76, 175, 80, 0.1);">
                 <p style="margin: 0; color: #2e7d32; font-size: 15px; font-weight: 700; line-height: 1.5;">
                     <span style="font-size: 18px; margin-right: 8px;">🔗</span>
                     <strong>USE THESE LINKS IN YOUR TRAFFIC SOURCE</strong> (Facebook, Google, etc.)
@@ -3653,6 +3295,16 @@ if ($editCampaign && isset($editCampaign['id'])) {
                     <?php else: ?>
                         Default tracking link (using campaign key). Add slugs in the campaign settings above to create multiple tracking links.
                     <?php endif; ?>
+                </p>
+            </div>
+            <div id="tracking-links-banner-whop" style="display:none;background:linear-gradient(135deg,#f3eef8 0%,#e8dff0 100%);border-left:4px solid #6b4f8a;border-radius:6px;padding:14px 16px;margin-bottom:16px;">
+                <p style="margin:0;color:#4a3563;font-size:15px;font-weight:700;line-height:1.5;">
+                    Whop Ads: do <u>not</u> paste this <code>/km/</code> link into Whop
+                </p>
+                <p style="margin:8px 0 0;color:#5d4037;font-size:13px;font-weight:500;line-height:1.45;">
+                    Put your <strong>landing page URL</strong> (or the Redirectless Direct Campaign Link below) in Whop as the ad destination —
+                    the Pixel must run on that first page. This <code>/km/</code> link is only for your <strong>LP CTA button</strong>
+                    (classic path), after the visitor already hit the LP. Copy Pixel + CTA from the Whop panel further down.
                 </p>
             </div>
             
@@ -3720,6 +3372,7 @@ if ($editCampaign && isset($editCampaign['id'])) {
             </div>
             
             <div style="background: #fff; border: 2px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                <p id="tracking-url-label" style="margin:0 0 10px 0;font-weight:600;color:#333;font-size:14px;">Campaign tracking link</p>
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
                     <code id="full-tracking-url" style="font-size: 14px; color: #333; word-break: break-all; flex: 1; white-space: pre-wrap; font-family: 'Courier New', monospace; background: #f5f5f5; padding: 12px; border-radius: 4px; border: 1px solid #ddd;">
                         <?= htmlspecialchars(BASE_URL) ?>/km/<?= htmlspecialchars($editCampaign['campaign_key'] ?? $editCampaign['id']) ?>
@@ -3727,6 +3380,20 @@ if ($editCampaign && isset($editCampaign['id'])) {
                     <button id="copy-url-btn" onclick="copyFullTrackingUrl()" class="btn btn-primary" style="white-space: nowrap; padding: 12px 24px; background: #4caf50; border: none; border-radius: 6px; color: #fff; font-weight: 600; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3);" aria-label="Copy full tracking URL" onmouseover="this.style.background='#3d5a26'; this.style.boxShadow='0 3px 6px rgba(61, 90, 38, 0.4)'" onmouseout="this.style.background='#4caf50'; this.style.boxShadow='0 2px 4px rgba(76, 175, 80, 0.3)'">
                         📋 Copy
                     </button>
+                </div>
+                <p id="tracking-url-whop-note" style="display:none;margin:10px 0 0;font-size:12px;color:#6b4f8a;line-height:1.45;">
+                    For Whop: copy this only into the LP CTA (Whop panel step 3), or skip it and use Redirectless below.
+                </p>
+            </div>
+
+            <div id="whop-ad-destination-box" style="display:none;background:linear-gradient(135deg,#f3eef8 0%,#e8dff0 100%);border:2px solid #6b4f8a;border-radius:8px;padding:20px;margin-bottom:24px;">
+                <p style="margin:0 0 8px 0;font-weight:700;color:#4a3563;font-size:15px;">Whop ad destination (paste this into Whop Ads)</p>
+                <p style="margin:0 0 12px 0;font-size:13px;color:#5d4037;line-height:1.45;">
+                    This is your campaign’s single landing page URL — not the <code>/km/</code> link. Whop/Meta append their tracking params onto this URL.
+                </p>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
+                    <code id="whop-ad-destination-url" style="font-size:14px;color:#333;word-break:break-all;flex:1;white-space:pre-wrap;font-family:'Courier New',monospace;background:#fff;padding:12px;border-radius:4px;border:1px solid #d4c4e4;min-width:200px;">Select a landing page above</code>
+                    <button type="button" id="copy-whop-ad-destination-btn" onclick="copyWhopAdDestination()" style="white-space:nowrap;padding:12px 24px;background:#6b4f8a;border:none;border-radius:6px;color:#fff;font-weight:600;cursor:pointer;">📋 Copy</button>
                 </div>
             </div>
             
@@ -3748,14 +3415,89 @@ if ($editCampaign && isset($editCampaign['id'])) {
             </div>
             <?php endif; ?>
 
+            <?php
+            // Whop Ads: one-place copy pack (Pixel + Kuma handoff) when Whop traffic source is selected
+            $whopBizForSnippet = $whopBizAccountId !== '' ? $whopBizAccountId : 'biz_xxxxxxxxxxxxx';
+            $whopPixelSnippet = '<script>
+!function(w,d,s,u,n,a,b){if(w[n])return;a=w[n]={q:[],t:+new Date,s:[],o:u,track:function(){a.q.push([+new Date].concat([].slice.call(arguments)))},setScope:function(){a.s=[].slice.call(arguments).filter(function(x){return typeof x==="string"});a.q.push([+new Date,"setScope"].concat(a.s))},scope:function(){var c=[].slice.call(arguments);return{track:function(){a.q.push([+new Date].concat([].slice.call(arguments)).concat([{__scope:c}]))}}}};b=d.createElement(s);b.async=1;b.src=u+"/s.js";d.getElementsByTagName(s)[0].parentNode.insertBefore(b,d.getElementsByTagName(s)[0])}(window,document,"script","https://t.whop.tw","whop");
+whop.setScope("' . $whopBizForSnippet . '");
+whop.track("page");
+</script>';
+            $whopHandoffSnippet = ''; // Filled client-side from the campaign tracking URL (selected domain + slug)
+            $whopCombinedSnippet = '';
+            ?>
+            <!-- Whop Ads LP codes (Pixel + Kuma) — show when Whop traffic source selected -->
+            <div id="whop-lp-codes-panel" style="display:none;background:linear-gradient(135deg,#f3eef8 0%,#e8dff0 100%);border:2px solid #6b4f8a;border-radius:8px;padding:20px;margin-top:24px;"
+                 data-default-tracking-url="<?= htmlspecialchars($baseUrl . '/km/' . ($editCampaign['campaign_key'] ?? $editCampaign['id']), ENT_QUOTES) ?>">
+                <h3 style="margin:0 0 8px 0;color:#4a3563;font-size:16px;font-weight:600;">Whop Ads — copy codes for your landing page</h3>
+                <p style="margin:0 0 16px 0;font-size:13px;color:#5d4037;line-height:1.5;">
+                    Paste these on your <strong>owned LP</strong> (the ad destination). Funnel:
+                    Whop Ad → LP (pixel + codes below) → CTA into Kuma → offer → postback → Whop Events.
+                    <?php if ($whopBizAccountId === ''): ?>
+                    <br><span style="color:#b71c1c;">Connect your <code>biz_…</code> account under <a href="?page=honeycomb" style="color:#4a3563;">Honeycomb → Whop Ads</a> so the pixel snippet is prefilled.</span>
+                    <?php endif; ?>
+                </p>
+
+                <div style="margin-bottom:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+                        <p style="margin:0;font-weight:600;color:#333;font-size:14px;">1. Whop Pixel <span style="font-weight:400;color:#666;">(paste in <code>&lt;head&gt;</code>)</span></p>
+                        <button type="button" onclick="copyWhopSnippet('whop-pixel-code', this)" style="padding:6px 14px;font-size:12px;background:#6b4f8a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">📋 Copy Pixel</button>
+                    </div>
+                    <pre id="whop-pixel-code" style="margin:0;padding:12px;background:#1e1e1e;color:#d4d4d4;border-radius:6px;overflow:auto;font-size:12px;line-height:1.45;white-space:pre-wrap;"><?= htmlspecialchars($whopPixelSnippet) ?></pre>
+                </div>
+
+                <div style="margin-bottom:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+                        <p style="margin:0;font-weight:600;color:#333;font-size:14px;">2. Handoff script <span style="font-weight:400;color:#666;">(paste before <code>&lt;/body&gt;</code>)</span></p>
+                        <button type="button" onclick="copyWhopSnippet('whop-handoff-code', this)" style="padding:6px 14px;font-size:12px;background:#6b4f8a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">📋 Copy Script</button>
+                    </div>
+                    <pre id="whop-handoff-code" style="margin:0;padding:12px;background:#1e1e1e;color:#d4d4d4;border-radius:6px;overflow:auto;font-size:12px;line-height:1.45;white-space:pre-wrap;"></pre>
+                    <p style="margin:8px 0 0;font-size:12px;color:#666;line-height:1.45;">
+                        Passes <code>_wuid</code> + page URL into Kuma when the CTA is clicked. Do not also use <code>chomp.js</code> / <code>kTrack()</code> on this path.
+                    </p>
+                </div>
+
+                <div style="margin-bottom:16px;padding:16px;background:#fff;border:2px solid #6b4f8a;border-radius:8px;box-shadow:0 2px 6px rgba(107,79,138,0.12);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+                        <p style="margin:0;font-weight:700;color:#4a3563;font-size:15px;">3. Your CTA button <span style="font-weight:500;color:#666;font-size:13px;">(replace your LP button with this)</span></p>
+                        <button type="button" onclick="copyWhopSnippet('whop-cta-code', this)" style="padding:8px 16px;font-size:13px;background:#3d5a26;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">📋 Copy CTA</button>
+                    </div>
+                    <pre id="whop-cta-code" style="margin:0;padding:14px;background:#f8f5fb;color:#333;border:1px solid #d4c4e4;border-radius:6px;overflow:auto;font-size:14px;line-height:1.5;white-space:pre-wrap;font-family:'Courier New',monospace;"></pre>
+                    <p style="margin:10px 0 0;font-size:12px;color:#555;line-height:1.45;">
+                        <code>href</code> is prefilled with this campaign’s tracking URL (selected domain + slug). Keep <code>data-kuma-cta</code> so the handoff script can attach.
+                        Change the link text to match your page.
+                    </p>
+                </div>
+
+                <div style="margin-bottom:12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+                        <p style="margin:0;font-weight:600;color:#333;font-size:14px;">Copy everything (Pixel + script + CTA)</p>
+                        <button type="button" onclick="copyWhopSnippet('whop-combined-code', this)" style="padding:8px 16px;font-size:13px;background:#6b4f8a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">📋 Copy All Codes</button>
+                    </div>
+                    <pre id="whop-combined-code" style="display:none;"></pre>
+                </div>
+
+                <div style="padding:12px;background:#fff;border:1px solid #c5b3d6;border-radius:6px;font-size:12px;color:#555;line-height:1.5;">
+                    <strong>Prefer ads → LP directly (no /km/ link)?</strong>
+                    Skip the handoff and CTA above. Keep the Whop Pixel in <code>&lt;head&gt;</code>, then open
+                    <em>Optional: Redirectless</em> below and paste the single JavaScript block.
+                </div>
+            </div>
+
+            <?php
+            $ringbaLpCodesCompact = false;
+            include __DIR__ . '/partials/campaign-ringba-lp-codes.php';
+            ?>
+
             <!-- CTA Configuration Guide (Only show for LP and Split flows, not DTO) -->
             <?php if (!empty($editCampaign['flow_type']) && $editCampaign['flow_type'] !== 'DTO'): ?>
-            <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border: 2px solid #3d5a26; border-radius: 8px; padding: 20px; margin-top: 24px;">
-                <h3 style="margin: 0 0 16px 0; color: #3d5a26; font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+            <div id="standard-cta-guide-panel" style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border: 2px solid #3d5a26; border-radius: 8px; padding: 20px; margin-top: 24px;">
+                <h3 id="standard-cta-guide-title" style="margin: 0 0 16px 0; color: #3d5a26; font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
                     <span>🔗</span>
-                    Configure Your Landing Page CTA
+                    <span id="standard-cta-guide-title-text">Configure Your Landing Page CTA</span>
                 </h3>
-                
+
+                <div id="standard-cta-classic-steps">
                 <div style="margin-bottom: 20px;">
                     <p style="color: #333; margin-bottom: 12px; font-weight: 600; font-size: 14px;">Step 1: Add Simple KUMA's Click Tracker to Your Landing Page</p>
                     <div style="background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px; padding: 12px; margin-bottom: 12px;">
@@ -3786,6 +3528,14 @@ if ($editCampaign && isset($editCampaign['id'])) {
                     </div>
                     <p style="font-size: 12px; color: #666; margin: 0;">Replace your CTA button with this code. The <code>kTrack()</code> function will automatically track the click and redirect to your offer.</p>
                 </div>
+                </div><!-- /#standard-cta-classic-steps -->
+
+                <p id="whop-cta-redirectless-intro" style="display:none;margin:0 0 16px 0;font-size:13px;color:#555;line-height:1.5;">
+                    <strong>Whop redirectless setup (3 steps):</strong>
+                    1) Paste the Whop Pixel from the panel above into your LP <code>&lt;head&gt;</code>.
+                    2) Copy the Direct Campaign Link into your Whop/Meta ad destination.
+                    3) Paste the JavaScript block below before <code>&lt;/body&gt;</code> (includes visit tracking + CTA).
+                </p>
 
                 <?php
                 // Show redirectless tracking option for LP/Split flows
@@ -3812,10 +3562,10 @@ if ($editCampaign && isset($editCampaign['id'])) {
                     }
                 ?>
                 <!-- Optional: Redirectless Tracking -->
-                <details style="margin-top: 24px;">
-                    <summary style="cursor: pointer; font-weight: 600; padding: 14px 16px; background: linear-gradient(135deg, #2e7d32 0%, #4caf50 100%); border-radius: 8px; display: flex; align-items: center; gap: 8px; border: 2px solid #3d5a26; color: #fff; font-size: 15px; box-shadow: 0 2px 4px rgba(61, 90, 38, 0.2);">
+                <details id="standard-cta-redirectless" style="margin-top: 24px;">
+                    <summary id="standard-cta-redirectless-summary" style="cursor: pointer; font-weight: 600; padding: 14px 16px; background: linear-gradient(135deg, #2e7d32 0%, #4caf50 100%); border-radius: 8px; display: flex; align-items: center; gap: 8px; border: 2px solid #3d5a26; color: #fff; font-size: 15px; box-shadow: 0 2px 4px rgba(61, 90, 38, 0.2);">
                         <span>📡</span>
-                        Optional: Redirectless Tracking (For Google Ads & Similar)
+                        <span id="standard-cta-redirectless-summary-text">Optional: Redirectless Tracking (For Google Ads & Similar)</span>
                     </summary>
                     <div style="padding: 24px; border: 2px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; background: #fafafa;">
                         <div style="background: #e8f5e9; border-left: 4px solid #4caf50; border-radius: 4px; padding: 16px; margin-bottom: 20px;">
@@ -3918,43 +3668,35 @@ if ($editCampaign && isset($editCampaign['id'])) {
                         </div>
                         <?php endif; ?>
                         
-                        <!-- Traffic Source Selector for Redirectless Link -->
-                        <div style="margin-bottom: 24px; padding-top: 16px;">
-                            <label style="display: block; color: #333; margin-bottom: 10px; font-weight: 600; font-size: 14px;">
-                                Select Traffic Source (for token parameters):
-                            </label>
-                            <div style="position: relative;">
-                                <select id="redirectless-traffic-source-select" 
-                                        onchange="updateRedirectlessCode()"
-                                        style="width: 100%; padding: 12px 40px 12px 16px; border: 2px solid #4caf50; border-radius: 6px; font-size: 14px; background: #fff; cursor: pointer; appearance: none; -webkit-appearance: none; -moz-appearance: none; color: #333; font-weight: 500; box-shadow: 0 2px 4px rgba(76, 175, 80, 0.15); transition: all 0.2s;" 
-                                        onfocus="this.style.borderColor='#3d5a26'" 
-                                        onblur="this.style.borderColor='#4caf50'">
-                                    <option value="">-- Select Traffic Source --</option>
-                                    <?php 
-                                    // Get traffic sources for dropdown (same as main link generator)
-                                    $redirectlessTrafficSources = $trafficSource->getAll();
-                                    foreach ($redirectlessTrafficSources as $ts): 
-                                        $tsTokens = $ts['tokens_json'] ?? [];
-                                        if (is_string($tsTokens)) {
-                                            $tsTokens = json_decode($tsTokens, true) ?? [];
-                                        }
-                                    ?>
-                                        <option value="<?= $ts['id'] ?>"
-                                                data-tokens='<?= htmlspecialchars(json_encode($tsTokens)) ?>'
-                                                data-cost-param='<?= htmlspecialchars($ts['cost_param_key'] ?? '') ?>'
-                                                data-ts-name="<?= htmlspecialchars($ts['name'], ENT_QUOTES, 'UTF-8') ?>">
-                                            <?= htmlspecialchars($ts['name']) ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <div style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #4caf50; font-size: 18px; font-weight: bold;">
-                                    ▼
-                                </div>
-                            </div>
-                            <p style="font-size: 12px; color: #666; margin: 8px 0 0 0;">
-                                Select a traffic source to append its tracking tokens to the direct link. Custom campaign tokens will be added after.
-                            </p>
+                        <!-- Traffic source for redirectless: always the campaign's selected source -->
+                        <div id="redirectless-traffic-source-info" style="margin-bottom: 24px; padding: 12px 14px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 6px; font-size: 13px; color: #2e7d32; line-height: 1.45;">
+                            Using this campaign’s traffic source: <strong id="redirectless-traffic-source-label">—</strong>
+                            <span style="display:block;margin-top:4px;font-size:12px;color:#555;">
+                                Token parameters on the Direct Campaign Link follow that source. Change it in Traffic Source above.
+                            </span>
                         </div>
+                        <!-- Kept in sync with #traffic_source_id for updateRedirectlessCode -->
+                        <select id="redirectless-traffic-source-select" style="display:none;" aria-hidden="true" tabindex="-1">
+                            <option value="">--</option>
+                            <?php
+                            $redirectlessTrafficSources = $trafficSource->getAll();
+                            $campaignTsIdForRedirectless = (int) ($editCampaign['traffic_source_id'] ?? 0);
+                            foreach ($redirectlessTrafficSources as $ts):
+                                $tsTokens = $ts['tokens_json'] ?? [];
+                                if (is_string($tsTokens)) {
+                                    $tsTokens = json_decode($tsTokens, true) ?? [];
+                                }
+                                $tsId = (int) $ts['id'];
+                            ?>
+                                <option value="<?= $tsId ?>"
+                                        data-tokens='<?= htmlspecialchars(json_encode($tsTokens)) ?>'
+                                        data-cost-param='<?= htmlspecialchars($ts['cost_param_key'] ?? '') ?>'
+                                        data-ts-name="<?= htmlspecialchars($ts['name'], ENT_QUOTES, 'UTF-8') ?>"
+                                        <?= $campaignTsIdForRedirectless === $tsId ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($ts['name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                         
                         <!-- Direct Campaign Link Display -->
                         <div id="redirectless-direct-link-container" style="margin-bottom: 24px; display: none;">
@@ -3979,8 +3721,8 @@ if ($editCampaign && isset($editCampaign['id'])) {
 <?php endif; ?>
 
                         <!-- JavaScript Version -->
-                        <div style="margin-bottom: 20px;">
-                            <p style="color: #333; margin-bottom: 12px; font-weight: 600; font-size: 14px;">Complete Redirectless Code (Preferred - works on any page):</p>
+                        <div id="redirectless-js-options" style="margin-bottom: 20px;">
+                            <p id="redirectless-js-title" style="color: #333; margin-bottom: 12px; font-weight: 600; font-size: 14px;">Complete Redirectless Code (Preferred - works on any page):</p>
                             <div style="background: #fff; border: 2px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                                 <div class="redirectless-code-container" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
                                     <code id="redirectless-js-code" class="redirectless-code" style="font-size: 13px; color: #333; word-break: break-all; flex: 1; white-space: pre-wrap; font-family: 'Courier New', monospace; background: #f5f5f5; padding: 12px; border-radius: 4px; border: 1px solid #ddd;">
@@ -4000,11 +3742,11 @@ var kumaConfig = { "root": "<?= htmlspecialchars(BASE_URL) ?>/", };
                                     </button>
                                 </div>
                             </div>
-                            <p style="font-size: 12px; color: #666; margin: 0;">Paste the scripts before the closing <code>&lt;/body&gt;</code> tag and put <code>onclick="kTrack(); return false;"</code> on your CTA. Select a landing page above to auto-populate the LP ID. This one block is all you need for redirectless. Safe to leave on LPs that also get redirect traffic — <code>kumaTrack()</code> skips creating a new click when <code>click_id</code> is already in the URL.</p>
+                            <p id="redirectless-js-help" style="font-size: 12px; color: #666; margin: 0;">Paste the scripts before the closing <code>&lt;/body&gt;</code> tag and put <code>onclick="kTrack(); return false;"</code> on your CTA. Select a landing page above to auto-populate the LP ID. This one block is all you need for redirectless. Safe to leave on LPs that also get redirect traffic — <code>kumaTrack()</code> skips creating a new click when <code>click_id</code> is already in the URL.</p>
                         </div>
 
-                        <!-- PHP Pixel Version -->
-                        <div style="margin-bottom: 20px;">
+                        <!-- PHP Pixel Version (hidden for Whop — cannot pass _wuid) -->
+                        <div id="redirectless-php-options" style="margin-bottom: 20px;">
                             <p style="color: #333; margin-bottom: 12px; font-weight: 600; font-size: 14px;">PHP Pixel (Only if your page is .php):</p>
                             <div style="background: #fff; border: 2px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                                 <div class="redirectless-code-container" style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
@@ -4261,6 +4003,17 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             });
         }
 
+        /** Params that platforms append themselves, or that the LP pixel/handoff must supply — never put on ad URL templates. */
+        function isHandoffOnlyTrackingParam(parameter) {
+            const p = String(parameter || '').toLowerCase();
+            return p === 'fbclid'
+                || p === '_wuid'
+                || p === 'wuid'
+                || p === 'whop_page_url'
+                || p === 'whop_landing_url'
+                || p === 'whop_visitor_id';
+        }
+
         function updateTrackingLinkWithTrafficSource() {
             const trafficSourceSelect = document.getElementById('link-traffic-source-select');
             const trackingUrlElement = document.getElementById('full-tracking-url');
@@ -4314,17 +4067,16 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             }
             
             // Add traffic source token parameters using the token's placeholder (Facebook template variables)
-            // CRITICAL: Exclude 'fbclid' - Facebook automatically appends this parameter to URLs when users click ads
-            // We should NOT include it in the campaign link template
+            // Skip empty placeholders (capture-only) and handoff-only / auto-appended click ids.
             if (Array.isArray(tokens)) {
                 tokens.forEach(token => {
                     const parameter = token.parameter || token.key || '';
-                    const placeholder = token.placeholder || '{value}';
-                    // Skip fbclid - Facebook adds it automatically
-                    if (parameter && parameter.toLowerCase() !== 'fbclid') {
-                        // Use the token's placeholder which contains Facebook template variables like {{ad.id}}, {{adset.id}}, etc.
-                        params.push(parameter + '=' + placeholder);
-                    }
+                    const placeholder = (token.placeholder !== undefined && token.placeholder !== null)
+                        ? String(token.placeholder).trim()
+                        : '';
+                    if (!parameter || !placeholder) return;
+                    if (isHandoffOnlyTrackingParam(parameter)) return;
+                    params.push(parameter + '=' + placeholder);
                 });
             }
             
@@ -4351,6 +4103,9 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             
             // Update displayed URL
             trackingUrlElement.textContent = trackingUrl;
+            if (typeof updateWhopHandoffCode === 'function') {
+                updateWhopHandoffCode();
+            }
         }
 
         // Show/hide traffic source selector dropdown based on campaign traffic source
@@ -4433,13 +4188,17 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             }
             
             // Add traffic source token parameters (new detailed structure)
+            // Skip empty placeholders (capture-only: Whop/Meta append these themselves)
+            // and handoff-only params that must come from the LP pixel, not the ad URL.
             if (Array.isArray(tokens)) {
                 tokens.forEach(token => {
                     const parameter = token.parameter || token.key || '';
-                    const placeholder = token.placeholder || '{value}';
-                    if (parameter) {
-                        params.push(parameter + '=' + placeholder);
-                    }
+                    const placeholder = (token.placeholder !== undefined && token.placeholder !== null)
+                        ? String(token.placeholder).trim()
+                        : '';
+                    if (!parameter || !placeholder) return;
+                    if (isHandoffOnlyTrackingParam(parameter)) return;
+                    params.push(parameter + '=' + placeholder);
                 });
             }
             
@@ -4465,6 +4224,9 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             }
             
             trackingUrlElement.textContent = trackingUrl;
+            if (typeof updateWhopHandoffCode === 'function') {
+                updateWhopHandoffCode();
+            }
         }
 
         function toggleFacebookIntegration() {
@@ -4478,6 +4240,9 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             
             // Whole Facebook block (CAPI, ad account, Meta campaign linking) only when FB is source
             facebookField.style.display = isFacebook ? 'block' : 'none';
+            if (typeof toggleTsIntegrationEmpty === 'function') {
+                toggleTsIntegrationEmpty();
+            }
         }
 
         function toggleGoogleAdsIntegration() {
@@ -4488,6 +4253,448 @@ $clickId = $_GET['click_id'] ?? $kumaClickId ?? $_COOKIE['kuma_click_id'] ?? '';
             const selectedOption = trafficSourceSelect.options[trafficSourceSelect.selectedIndex];
             const isGoogle = selectedOption && selectedOption.getAttribute('data-is-google') === '1';
             googleAdsField.style.display = isGoogle ? 'block' : 'none';
+            if (typeof toggleTsIntegrationEmpty === 'function') {
+                toggleTsIntegrationEmpty();
+            }
+        }
+
+        function toggleTsIntegrationEmpty() {
+            const empty = document.getElementById('ts_integration_empty');
+            const facebookField = document.getElementById('facebook_integration_field');
+            const googleAdsField = document.getElementById('google_ads_integration_field');
+            if (!empty) return;
+            const fbOn = facebookField && facebookField.style.display !== 'none';
+            const gaOn = googleAdsField && googleAdsField.style.display !== 'none';
+            empty.style.display = (fbOn || gaOn) ? 'none' : 'block';
+        }
+
+        function toggleHoneycombBindings() {
+            const trafficSourceSelect = document.getElementById('traffic_source_id');
+            const wrap = document.getElementById('honeycomb_binding_fields');
+            const section = document.getElementById('campaign-form-section-honeycomb');
+            if (!trafficSourceSelect || !wrap) return;
+            const selectedOption = trafficSourceSelect.options[trafficSourceSelect.selectedIndex];
+            const providerKey = selectedOption ? (selectedOption.getAttribute('data-provider-key') || '') : '';
+            let any = false;
+            wrap.querySelectorAll('.honeycomb-binding-panel').forEach(function (panel) {
+                const always = panel.getAttribute('data-always-visible') === '1'
+                    || panel.getAttribute('data-provider-key') === '*';
+                const match = always || (providerKey !== '' && panel.getAttribute('data-provider-key') === providerKey);
+                panel.style.display = match ? 'block' : 'none';
+                if (match) any = true;
+            });
+            wrap.style.display = any ? 'block' : 'none';
+            if (section) {
+                section.style.display = any ? '' : 'none';
+            }
+            if (typeof toggleRingbaLpCodes === 'function') {
+                toggleRingbaLpCodes();
+            }
+        }
+
+        function toggleWhopLpCodes() {
+            const panel = document.getElementById('whop-lp-codes-panel');
+            const trafficSourceSelect = document.getElementById('traffic_source_id');
+            if (!trafficSourceSelect) return;
+            const selectedOption = trafficSourceSelect.options[trafficSourceSelect.selectedIndex];
+            const providerKey = selectedOption ? (selectedOption.getAttribute('data-provider-key') || '') : '';
+            const isWhop = providerKey === 'whop';
+
+            if (panel) {
+                panel.style.display = isWhop ? 'block' : 'none';
+            }
+
+            const bannerDefault = document.getElementById('tracking-links-banner-default');
+            const bannerWhop = document.getElementById('tracking-links-banner-whop');
+            const urlLabel = document.getElementById('tracking-url-label');
+            const urlWhopNote = document.getElementById('tracking-url-whop-note');
+            if (bannerDefault) {
+                bannerDefault.style.display = isWhop ? 'none' : 'block';
+            }
+            if (bannerWhop) {
+                bannerWhop.style.display = isWhop ? 'block' : 'none';
+            }
+            if (urlLabel) {
+                urlLabel.textContent = isWhop
+                    ? 'Kuma CTA link (for your LP button — not for Whop Ads)'
+                    : 'Campaign tracking link';
+            }
+            if (urlWhopNote) {
+                urlWhopNote.style.display = isWhop ? 'block' : 'none';
+            }
+
+            // When Whop is selected, the Whop panel is the CTA setup — hide classic chomp/kTrack steps
+            // so users are not offered two conflicting CTA recipes.
+            const classicSteps = document.getElementById('standard-cta-classic-steps');
+            const titleText = document.getElementById('standard-cta-guide-title-text');
+            const whopIntro = document.getElementById('whop-cta-redirectless-intro');
+            const redirectlessSummary = document.getElementById('standard-cta-redirectless-summary-text');
+            const ctaPanel = document.getElementById('standard-cta-guide-panel');
+
+            if (classicSteps) {
+                classicSteps.style.display = isWhop ? 'none' : 'block';
+            }
+            if (whopIntro) {
+                whopIntro.style.display = isWhop ? 'block' : 'none';
+            }
+            if (titleText) {
+                titleText.textContent = isWhop
+                    ? 'Optional: Redirectless Tracking (Whop)'
+                    : 'Configure Your Landing Page CTA';
+            }
+            if (redirectlessSummary) {
+                redirectlessSummary.textContent = isWhop
+                    ? 'Optional: Redirectless Tracking (ads go straight to your LP)'
+                    : 'Optional: Redirectless Tracking (For Google Ads & Similar)';
+            }
+            if (ctaPanel) {
+                const hasRedirectless = !!document.getElementById('standard-cta-redirectless');
+                ctaPanel.style.display = (isWhop && !hasRedirectless) ? 'none' : 'block';
+            }
+
+            // Whop cannot use PHP pixel (no access to LP _wuid) — show JS only
+            const phpOptions = document.getElementById('redirectless-php-options');
+            if (phpOptions) {
+                phpOptions.style.display = isWhop ? 'none' : 'block';
+            }
+            const jsTitle = document.getElementById('redirectless-js-title');
+            if (jsTitle) {
+                jsTitle.textContent = isWhop
+                    ? 'Paste this JavaScript on your landing page (required for Whop)'
+                    : 'Complete Redirectless Code (Preferred - works on any page):';
+            }
+            const jsHelp = document.getElementById('redirectless-js-help');
+            if (jsHelp) {
+                jsHelp.innerHTML = isWhop
+                    ? 'Whop Pixel must already be in <code>&lt;head&gt;</code>. Paste this before <code>&lt;/body&gt;</code>. It records the visit (with <code>_wuid</code>) and wires your CTA via <code>kTrack()</code>.'
+                    : 'Paste the scripts before the closing <code>&lt;/body&gt;</code> tag and put <code>onclick="kTrack(); return false;"</code> on your CTA. Select a landing page above to auto-populate the LP ID. This one block is all you need for redirectless. Safe to leave on LPs that also get redirect traffic — <code>kumaTrack()</code> skips creating a new click when <code>click_id</code> is already in the URL.';
+            }
+
+            if (isWhop) {
+                updateWhopHandoffCode();
+            }
+
+            if (typeof syncWhopLpRotationLimits === 'function') {
+                syncWhopLpRotationLimits(isWhop);
+            }
+            if (typeof updateWhopAdDestination === 'function') {
+                updateWhopAdDestination();
+            }
+        }
+
+        function isWhopTrafficSourceSelected() {
+            const trafficSourceSelect = document.getElementById('traffic_source_id');
+            if (!trafficSourceSelect) return false;
+            const selectedOption = trafficSourceSelect.options[trafficSourceSelect.selectedIndex];
+            const providerKey = selectedOption ? (selectedOption.getAttribute('data-provider-key') || '') : '';
+            return providerKey === 'whop';
+        }
+
+        /**
+         * Whop Ads: one LP only — hide extras, force 100% weight, hide add/equalize.
+         * Switching away from Whop restores the normal multi-LP UI.
+         */
+        function syncWhopLpRotationLimits(isWhop) {
+            if (typeof isWhop === 'undefined') {
+                isWhop = isWhopTrafficSourceSelected();
+            }
+
+            const legendText = document.getElementById('lp_rotation_legend_text');
+            const equalizeBtn = document.getElementById('lp_equalize_weights_btn');
+            const helpDefault = document.getElementById('lp_rotation_help');
+            const helpWhop = document.getElementById('lp_rotation_whop_help');
+            const tip = document.getElementById('lp_rotation_tip');
+            const destBox = document.getElementById('whop-ad-destination-box');
+            const container = document.getElementById('lp_items');
+
+            if (legendText) {
+                legendText.textContent = isWhop
+                    ? 'Whop Ads allows one landing page (ad destination)'
+                    : 'Landing Page Rotation (Weights must sum to 100%)';
+            }
+            if (equalizeBtn) {
+                equalizeBtn.style.display = isWhop ? 'none' : '';
+            }
+            if (helpDefault) {
+                helpDefault.style.display = isWhop ? 'none' : '';
+            }
+            if (helpWhop) {
+                helpWhop.style.display = isWhop ? 'block' : 'none';
+            }
+            if (tip) {
+                tip.textContent = isWhop
+                    ? '💡 Paste this LP’s URL into Whop Ads. Put Pixel + Kuma codes on that same page.'
+                    : '💡 Make sure your LPs include the click tracker script';
+            }
+            if (destBox) {
+                destBox.style.display = isWhop ? 'block' : 'none';
+            }
+
+            document.querySelectorAll('.lp-add-btn').forEach(function (btn) {
+                btn.style.display = isWhop ? 'none' : '';
+            });
+
+            if (!container) return;
+
+            const rows = Array.from(container.querySelectorAll('div[style*="grid-template-columns"]'));
+            if (rows.length === 0) return;
+
+            if (!isWhop) {
+                rows.forEach(function (row) {
+                    row.style.display = '';
+                    const weightInput = row.querySelector('input[name="lp_weight[]"]');
+                    const checkbox = row.querySelector('input[type="checkbox"]');
+                    const select = row.querySelector('select[name="lp_id[]"]');
+                    const hiddenInput = row.querySelector('input[type="hidden"][name^="lp_enabled"]');
+                    if (weightInput) {
+                        weightInput.removeAttribute('data-whop-locked');
+                    }
+                    if (checkbox) {
+                        checkbox.disabled = false;
+                        checkbox.style.pointerEvents = '';
+                        checkbox.style.opacity = '';
+                        if (row.hasAttribute('data-pre-whop-enabled')) {
+                            const wasEnabled = row.getAttribute('data-pre-whop-enabled') === '1';
+                            checkbox.checked = wasEnabled;
+                            if (hiddenInput) {
+                                hiddenInput.value = wasEnabled ? '1' : '0';
+                            }
+                            row.removeAttribute('data-pre-whop-enabled');
+                        }
+                    }
+                    // Re-apply enable lock from checkbox state
+                    if (typeof setRotationControlLocked === 'function') {
+                        setRotationControlLocked(select, weightInput, !!(checkbox && checkbox.checked));
+                    }
+                });
+                return;
+            }
+
+            // Prefer first enabled row with an LP selected; else first enabled; else first row
+            let keepIdx = 0;
+            for (let i = 0; i < rows.length; i++) {
+                const cb = rows[i].querySelector('input[type="checkbox"]');
+                const sel = rows[i].querySelector('select[name="lp_id[]"]');
+                if (cb && cb.checked && sel && sel.value) {
+                    keepIdx = i;
+                    break;
+                }
+            }
+            if (keepIdx === 0) {
+                for (let i = 0; i < rows.length; i++) {
+                    const cb = rows[i].querySelector('input[type="checkbox"]');
+                    if (cb && cb.checked) {
+                        keepIdx = i;
+                        break;
+                    }
+                }
+            }
+
+            rows.forEach(function (row, idx) {
+                const checkbox = row.querySelector('input[type="checkbox"]');
+                const hiddenInput = row.querySelector('input[type="hidden"][name^="lp_enabled"]');
+                const select = row.querySelector('select[name="lp_id[]"]');
+                const weightInput = row.querySelector('input[name="lp_weight[]"]');
+
+                if (!row.hasAttribute('data-pre-whop-enabled') && checkbox) {
+                    row.setAttribute('data-pre-whop-enabled', checkbox.checked ? '1' : '0');
+                }
+
+                if (idx === keepIdx) {
+                    row.style.display = '';
+                    if (checkbox) {
+                        checkbox.checked = true;
+                        checkbox.disabled = true;
+                        checkbox.style.pointerEvents = 'none';
+                        checkbox.style.opacity = '0.6';
+                    }
+                    if (hiddenInput) {
+                        hiddenInput.value = '1';
+                    }
+                    if (weightInput) {
+                        weightInput.value = '100';
+                        weightInput.setAttribute('data-whop-locked', '1');
+                    }
+                    if (typeof setRotationControlLocked === 'function') {
+                        setRotationControlLocked(select, weightInput, true);
+                    }
+                    // Keep weight read-only under Whop even though enabled
+                    if (weightInput) {
+                        weightInput.readOnly = true;
+                        weightInput.style.background = '#f5f5f5';
+                        weightInput.style.color = '#999';
+                        weightInput.style.cursor = 'not-allowed';
+                    }
+                } else {
+                    row.style.display = 'none';
+                    if (checkbox) {
+                        checkbox.checked = false;
+                        checkbox.disabled = true;
+                    }
+                    if (hiddenInput) {
+                        hiddenInput.value = '0';
+                    }
+                    if (weightInput) {
+                        weightInput.value = '0';
+                        weightInput.setAttribute('data-whop-locked', '1');
+                    }
+                    if (typeof setRotationControlLocked === 'function') {
+                        setRotationControlLocked(select, weightInput, false);
+                    }
+                }
+            });
+        }
+
+        function updateWhopAdDestination() {
+            const destBox = document.getElementById('whop-ad-destination-box');
+            const urlEl = document.getElementById('whop-ad-destination-url');
+            const copyBtn = document.getElementById('copy-whop-ad-destination-btn');
+            if (!urlEl) return;
+
+            const flowTypeEl = document.getElementById('flow_type');
+            const flowType = flowTypeEl ? flowTypeEl.value : '';
+            const showDest = isWhopTrafficSourceSelected() && (flowType === 'LP' || flowType === 'Split');
+
+            if (!showDest) {
+                if (destBox) destBox.style.display = 'none';
+                return;
+            }
+            if (destBox) destBox.style.display = 'block';
+
+            const container = document.getElementById('lp_items');
+            let lpUrl = '';
+            if (container) {
+                const rows = Array.from(container.querySelectorAll('div[style*="grid-template-columns"]'));
+                for (let i = 0; i < rows.length; i++) {
+                    const row = rows[i];
+                    if (row.style.display === 'none') continue;
+                    const checkbox = row.querySelector('input[type="checkbox"]');
+                    const select = row.querySelector('select[name="lp_id[]"]');
+                    if (!select || !select.value) continue;
+                    if (checkbox && !checkbox.checked) continue;
+                    const opt = select.options[select.selectedIndex];
+                    lpUrl = opt ? (opt.getAttribute('data-lp-url') || '') : '';
+                    break;
+                }
+            }
+
+            if (lpUrl) {
+                urlEl.textContent = lpUrl;
+                if (copyBtn) copyBtn.disabled = false;
+            } else {
+                urlEl.textContent = 'Select a landing page above';
+                if (copyBtn) copyBtn.disabled = true;
+            }
+        }
+
+        function copyWhopAdDestination() {
+            const urlEl = document.getElementById('whop-ad-destination-url');
+            const button = document.getElementById('copy-whop-ad-destination-btn');
+            if (!urlEl) return;
+            const url = (urlEl.textContent || '').trim();
+            if (!url || url === 'Select a landing page above') return;
+            const originalText = button ? button.innerHTML : '';
+            const done = function () {
+                if (!button) return;
+                button.innerHTML = '✓ Copied!';
+                setTimeout(function () { button.innerHTML = originalText; }, 2000);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(done).catch(function () {
+                    fallbackCopy(url, button, originalText);
+                });
+            } else if (typeof fallbackCopy === 'function') {
+                fallbackCopy(url, button, originalText);
+            } else {
+                done();
+            }
+        }
+
+        /** Base /km/ tracking URL for this campaign (selected domain + slug), without traffic-source macros. */
+        function getWhopCampaignTrackingUrl() {
+            const panel = document.getElementById('whop-lp-codes-panel');
+            let url = '';
+            if (typeof getCurrentSlugUrl === 'function') {
+                url = getCurrentSlugUrl();
+            }
+            if (!url && panel) {
+                url = panel.getAttribute('data-default-tracking-url') || '';
+            }
+            if (!url) {
+                const el = document.getElementById('full-tracking-url');
+                if (el) {
+                    url = (el.textContent || '').trim().split('?')[0];
+                }
+            }
+            return (url || '').trim().split('?')[0];
+        }
+
+        function updateWhopHandoffCode() {
+            const handoffEl = document.getElementById('whop-handoff-code');
+            const ctaEl = document.getElementById('whop-cta-code');
+            const combinedEl = document.getElementById('whop-combined-code');
+            const pixelEl = document.getElementById('whop-pixel-code');
+            if (!handoffEl) return;
+
+            const trackingUrl = getWhopCampaignTrackingUrl() || 'https://YOUR-TRACKER/km/YOUR-SLUG';
+            const safeUrl = JSON.stringify(trackingUrl);
+            const handoff = [
+                '<script>',
+                'function whopVisitorId() {',
+                '  const m = document.cookie.match(/(?:^|;\\s*)_wuid=([^;]*)/);',
+                '  if (m) return decodeURIComponent(m[1]);',
+                "  try { return localStorage.getItem('_wuid') || ''; } catch (e) { return ''; }",
+                '}',
+                'function kumaWhopUrl(baseTrackingUrl) {',
+                '  const u = new URL(baseTrackingUrl, location.href);',
+                '  const id = whopVisitorId();',
+                "  if (id) u.searchParams.set('_wuid', id);",
+                "  u.searchParams.set('whop_page_url', location.href);",
+                '  return u.toString();',
+                '}',
+                "document.querySelectorAll('a[data-kuma-cta]').forEach(function (el) {",
+                '  el.addEventListener(\'click\', function (e) {',
+                '    e.preventDefault();',
+                '    window.location.href = kumaWhopUrl(el.getAttribute(\'href\') || ' + safeUrl + ');',
+                '  });',
+                '});',
+                '</scr' + 'ipt>'
+            ].join('\n');
+
+            const cta = '<a href="' + trackingUrl.replace(/"/g, '&quot;') + '" data-kuma-cta>Click Here</a>';
+
+            handoffEl.textContent = handoff;
+            if (ctaEl) {
+                ctaEl.textContent = cta;
+            }
+            if (combinedEl) {
+                const pixel = pixelEl ? (pixelEl.textContent || '') : '';
+                combinedEl.textContent = '<!-- 1) Whop Pixel — paste in <head> -->\n'
+                    + pixel
+                    + '\n\n<!-- 2) Handoff script — paste before </body> -->\n'
+                    + handoff
+                    + '\n\n<!-- 3) CTA button — replace your LP button -->\n'
+                    + cta;
+            }
+        }
+
+        function copyWhopSnippet(elementId, button) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const text = el.textContent || '';
+            const originalText = button ? button.innerHTML : '';
+            const done = function () {
+                if (!button) return;
+                button.innerHTML = '✓ Copied!';
+                setTimeout(function () { button.innerHTML = originalText; }, 2000);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(done).catch(function () {
+                    fallbackCopy(text, button, originalText);
+                });
+            } else {
+                fallbackCopy(text, button, originalText);
+            }
         }
 
         function copyFullTrackingUrl() {
@@ -4844,17 +5051,16 @@ if (!empty(\$_GET['click_id'])) {
                 }
                 
                 // Add traffic source token parameters using the token's placeholder (Facebook template variables)
-                // CRITICAL: Exclude 'fbclid' - Facebook automatically appends this parameter to URLs when users click ads
-                // We should NOT include it in the campaign link template
+                // Skip empty placeholders (capture-only) and handoff-only / auto-appended click ids.
                 if (Array.isArray(tokens)) {
                     tokens.forEach(token => {
                         const parameter = token.parameter || token.key || '';
-                        const placeholder = token.placeholder || '{value}';
-                        // Skip fbclid - Facebook adds it automatically
-                        if (parameter && parameter.toLowerCase() !== 'fbclid') {
-                            // Use the token's placeholder which contains Facebook template variables like {{ad.id}}, {{adset.id}}, etc.
-                            params.push(parameter + '=' + placeholder);
-                        }
+                        const placeholder = (token.placeholder !== undefined && token.placeholder !== null)
+                            ? String(token.placeholder).trim()
+                            : '';
+                        if (!parameter || !placeholder) return;
+                        if (isHandoffOnlyTrackingParam(parameter)) return;
+                        params.push(parameter + '=' + placeholder);
                     });
                 }
                 
@@ -5064,19 +5270,13 @@ if (!empty(\$_GET['click_id'])) {
 
         // Auto-select first LP on page load if available
         document.addEventListener('DOMContentLoaded', function() {
+            syncRedirectlessTrafficSourceFromCampaign();
+
             const selector = document.getElementById('redirectless-lp-selector');
             if (selector && selector.options.length > 1) {
                 // Select first LP (skip the "-- Select --" option)
                 selector.selectedIndex = 1;
                 updateRedirectlessCode();
-            }
-            
-            // Update redirectless code when redirectless traffic source selector changes
-            const redirectlessTrafficSourceSelect = document.getElementById('redirectless-traffic-source-select');
-            if (redirectlessTrafficSourceSelect) {
-                redirectlessTrafficSourceSelect.addEventListener('change', function() {
-                    updateRedirectlessCode();
-                });
             }
             
             // Update redirectless code when custom tokens change
@@ -5091,7 +5291,29 @@ if (!empty(\$_GET['click_id'])) {
                 });
             });
         });
-    </script>
+
+        /** Redirectless uses the campaign traffic source — no second dropdown. */
+        function syncRedirectlessTrafficSourceFromCampaign() {
+            const campaignTs = document.getElementById('traffic_source_id');
+            const redirectlessTs = document.getElementById('redirectless-traffic-source-select');
+            const label = document.getElementById('redirectless-traffic-source-label');
+            if (!campaignTs || !redirectlessTs) return;
+
+            const selected = campaignTs.options[campaignTs.selectedIndex];
+            const tsId = campaignTs.value || '';
+            redirectlessTs.value = tsId;
+
+            let name = '—';
+            if (selected && tsId) {
+                name = (selected.textContent || '').replace(/\s*\(Coming soon\)\s*$/i, '').trim() || '—';
+            }
+            if (label) {
+                label.textContent = name;
+            }
+            if (typeof updateRedirectlessCode === 'function') {
+                updateRedirectlessCode();
+            }
+        }    </script>
 <?php endif; ?>
 
     <script>
@@ -5552,6 +5774,9 @@ if (!empty(\$_GET['click_id'])) {
         }
 
         function equalizeLPWeights() {
+            if (typeof isWhopTrafficSourceSelected === 'function' && isWhopTrafficSourceSelected()) {
+                return;
+            }
             const container = document.getElementById('lp_items');
             if (!container) return;
             
@@ -5582,6 +5807,16 @@ if (!empty(\$_GET['click_id'])) {
         }
         
         function handleLPEnabledChange(idx, isEnabled) {
+            if (typeof isWhopTrafficSourceSelected === 'function' && isWhopTrafficSourceSelected()) {
+                // Whop locks to a single enabled LP — re-sync instead of allowing multi-enable
+                if (typeof syncWhopLpRotationLimits === 'function') {
+                    syncWhopLpRotationLimits(true);
+                }
+                if (typeof updateWhopAdDestination === 'function') {
+                    updateWhopAdDestination();
+                }
+                return;
+            }
             // Update hidden input
             const hiddenInput = document.getElementById('lp_enabled_hidden_' + idx);
             if (hiddenInput) {
@@ -5600,6 +5835,9 @@ if (!empty(\$_GET['click_id'])) {
             
             // Redistribute weights among enabled items
             redistributeLPWeights();
+            if (typeof updateWhopAdDestination === 'function') {
+                updateWhopAdDestination();
+            }
         }
         
         function redistributeLPWeights() {
@@ -5781,6 +6019,15 @@ if (!empty(\$_GET['click_id'])) {
         document.addEventListener('DOMContentLoaded', function() {
             toggleFacebookIntegration();
             toggleGoogleAdsIntegration();
+            if (typeof toggleTsIntegrationEmpty === 'function') {
+                toggleTsIntegrationEmpty();
+            }
+            if (typeof toggleHoneycombBindings === 'function') {
+                toggleHoneycombBindings();
+            }
+            if (typeof toggleWhopLpCodes === 'function') {
+                toggleWhopLpCodes();
+            }
             initializeDisabledStates();
             updateFlowFields(); // Initialize flow fields visibility
             bindCampaignFormRotationSubmit();
@@ -5795,6 +6042,15 @@ if (!empty(\$_GET['click_id'])) {
         } else {
             toggleFacebookIntegration();
             toggleGoogleAdsIntegration();
+            if (typeof toggleTsIntegrationEmpty === 'function') {
+                toggleTsIntegrationEmpty();
+            }
+            if (typeof toggleHoneycombBindings === 'function') {
+                toggleHoneycombBindings();
+            }
+            if (typeof toggleWhopLpCodes === 'function') {
+                toggleWhopLpCodes();
+            }
             initializeDisabledStates();
             updateFlowFields(); // Initialize flow fields visibility
             bindCampaignFormRotationSubmit();
@@ -5807,6 +6063,12 @@ if (!empty(\$_GET['click_id'])) {
             // Split: Show split percentage configuration
             document.getElementById('split_fields').style.display = flowType === 'Split' ? 'block' : 'none';
             // Note: Offer rotation section is always visible - no need to toggle it
+            if (typeof syncWhopLpRotationLimits === 'function') {
+                syncWhopLpRotationLimits();
+            }
+            if (typeof updateWhopAdDestination === 'function') {
+                updateWhopAdDestination();
+            }
         }
         
         function updateSplitPercentage() {
@@ -5865,6 +6127,10 @@ if (!empty(\$_GET['click_id'])) {
         }
 
         function addLPItem() {
+            if (typeof isWhopTrafficSourceSelected === 'function' && isWhopTrafficSourceSelected()) {
+                alert('Whop Ads campaigns allow only one landing page (the ad destination).');
+                return;
+            }
             const container = document.getElementById('lp_items');
             const existingRows = container.querySelectorAll('div[style*="grid-template-columns"]');
             const newIndex = existingRows.length;
@@ -5985,7 +6251,11 @@ if (!empty(\$_GET['click_id'])) {
 <?php
 $fbPickerJsPath = __DIR__ . '/../public/assets/js/facebook-campaign-picker.js';
 $fbPickerJs = ASSETS_BASE_URL . '/assets/js/facebook-campaign-picker.js?v=' . (file_exists($fbPickerJsPath) ? filemtime($fbPickerJsPath) : '1');
+$ringbaJsPath = __DIR__ . '/../public/assets/js/campaign-ringba.js';
+$ringbaJs = ASSETS_BASE_URL . '/assets/js/campaign-ringba.js?v=' . (file_exists($ringbaJsPath) ? filemtime($ringbaJsPath) : '1');
 ?>
+<script>window.APP_BASE_URL = <?= json_encode(rtrim(APP_BASE_URL, '/'), JSON_THROW_ON_ERROR) ?>;</script>
+<script src="<?= htmlspecialchars($ringbaJs) ?>"></script>
 <script src="<?= htmlspecialchars($fbPickerJs) ?>"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
@@ -5993,6 +6263,9 @@ document.addEventListener('DOMContentLoaded', function () {
         window.FacebookCampaignPicker.init({
             selectedCampaignId: <?= json_encode($editCampaign ? ($editCampaign['facebook_marketing_campaign_id'] ?? null) : null) ?>,
         });
+    }
+    if (typeof toggleRingbaLpCodes === 'function') {
+        toggleRingbaLpCodes();
     }
 });
 </script>
